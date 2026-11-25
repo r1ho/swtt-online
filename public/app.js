@@ -18,7 +18,6 @@
     seenEffectId: null,
     seenDiceSeq: 0,
     tokenEls: new Map(),
-    ownerEls: new Map(),
     displayPos: new Map(),
     animations: new Map(),
     pendingId: null,
@@ -439,8 +438,6 @@
     app.animations.clear();
     app.tokenEls.forEach((el) => el.remove());
     app.tokenEls.clear();
-    app.ownerEls.forEach((el) => el.remove());
-    app.ownerEls.clear();
     app.taken = new Set();
     app.roomInfo = null;
     app.seenMoveSeq = 0;
@@ -514,7 +511,6 @@
       : null;
 
     renderSidePanels();
-    renderBoardOwners();
 
     // 位置同步 + 移动动画
     syncDisplayPositions();
@@ -726,56 +722,6 @@
     };
     app.animations.set(move.playerId, animation);
     animation.timer = setTimeout(step, 60);
-  }
-
-  function renderBoardOwners() {
-    const state = app.state;
-    if (!state) return;
-    const wrap = $('boardOwners');
-    if (!wrap) return;
-    const owners = new Map();
-    for (const player of state.players) {
-      if (player.eliminated) continue;
-      for (const trophy of player.trophies || []) {
-        if (!owners.has(trophy.tileId)) owners.set(trophy.tileId, player);
-      }
-    }
-
-    const seen = new Set();
-    for (const [tileId, player] of owners) {
-      const tile = tileOf(tileId);
-      if (!tile) continue;
-      seen.add(tileId);
-      let el = app.ownerEls.get(tileId);
-      if (!el) {
-        el = document.createElement('div');
-        el.className = 'board-owner';
-        el.innerHTML = '<img alt="" draggable="false">';
-        wrap.appendChild(el);
-        app.ownerEls.set(tileId, el);
-      }
-      const img = el.querySelector('img');
-      if (img.getAttribute('src') !== player.avatar) img.src = player.avatar;
-      img.alt = player.name;
-      el.title = `${tile.name} · 持有者 ${player.name}`;
-      const position = ownerPosition(tile);
-      el.style.left = `${position.x}%`;
-      el.style.top = `${position.y}%`;
-    }
-    for (const [tileId, el] of app.ownerEls) {
-      if (!seen.has(tileId)) {
-        el.remove();
-        app.ownerEls.delete(tileId);
-      }
-    }
-  }
-
-  function ownerPosition(tile) {
-    let x = tile.x;
-    let y = tile.y;
-    if (tile.id >= 1 && tile.id <= 10) y -= 6.7;
-    else if (tile.id >= 19 && tile.id <= 28) y += 5;
-    return { x, y };
   }
 
   function renderTokens() {

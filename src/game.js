@@ -272,6 +272,8 @@ class Room {
       lastEffect: this.lastEffect,
       winnerIds: this.winnerIds,
       rankings: this.status === 'ended' ? this.rankings() : null,
+      pointsRankings: this.status === 'ended' ? this.pointsRankings() : null,
+      trophyRankings: this.status === 'ended' ? this.trophyRankings() : null,
       logs: this.logs.slice(-40),
       loans: this.loans.map((l) => ({ ...l })),
       bladeUsed: this.bladeUsed,
@@ -774,27 +776,53 @@ class Room {
     }
   }
 
-  rankings() {
-    const units = (p) => p.trophies.reduce((sum, t) => sum + (t.streak || 1), 0);
+  trophyUnits(player) {
+    return player.trophies.reduce((sum, trophy) => sum + (trophy.streak || 1), 0);
+  }
+
+  trophyNames(player) {
+    return player.trophies.map((trophy) => ({
+      name: trophy.name,
+      count: Math.max(1, trophy.streak || 1),
+    }));
+  }
+
+  rankingRow(player, index) {
+    return {
+      rank: index + 1,
+      id: player.id,
+      name: player.name,
+      avatar: player.avatar,
+      points: player.points,
+      trophies: this.trophyUnits(player),
+      trophyNames: this.trophyNames(player),
+      eliminated: player.eliminated,
+    };
+  }
+
+  pointsRankings() {
     return [...this.players]
       .sort((a, b) => {
         if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
-        const netDiff = this.netWorth(b) - this.netWorth(a);
-        if (netDiff !== 0) return netDiff;
         if (b.points !== a.points) return b.points - a.points;
-        return units(b) - units(a);
+        return a.name.localeCompare(b.name, 'zh-Hans-CN');
       })
-      .map((p, index) => ({
-        rank: index + 1,
-        id: p.id,
-        name: p.name,
-        avatar: p.avatar,
-        points: p.points,
-        trophyValue: this.trophyValue(p),
-        netWorth: this.netWorth(p),
-        trophies: units(p),
-        eliminated: p.eliminated,
-      }));
+      .map((player, index) => this.rankingRow(player, index));
+  }
+
+  trophyRankings() {
+    return [...this.players]
+      .sort((a, b) => {
+        if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
+        const trophyDiff = this.trophyUnits(b) - this.trophyUnits(a);
+        if (trophyDiff !== 0) return trophyDiff;
+        return b.points - a.points;
+      })
+      .map((player, index) => this.rankingRow(player, index));
+  }
+
+  rankings() {
+    return this.pointsRankings();
   }
 
   finish(winnerIds, reason = '结算') {
@@ -810,21 +838,21 @@ class Room {
     const unique = [...new Set(winnerIds)];
     this.winnerIds = unique;
     const names = unique.map((id) => this.playerById(id)?.name).filter(Boolean).join('、');
-    this.log(`${reason}：${names || '无人'} 获得世一头衔`, 'win');
+    this.log(`${reason}：${names || '无人'} 获得积分榜第一`, 'win');
     this.broadcast();
   }
 
   finishByHost(playerId) {
     if (playerId !== this.hostId) throw new GameError('只有房主可以结算');
     if (this.status !== 'playing') throw new GameError('游戏未在进行中');
-    const ranked = this.rankings();
-    const top = ranked.length ? ranked[0].netWorth : 0;
-    const winners = ranked.filter((r) => r.netWorth === top).map((r) => r.id);
+    const ranked = this.pointsRankings();
+    const top = ranked.length ? ranked[0].points : 0;
+    const winners = ranked.filter((r) => r.points === top).map((r) => r.id);
     this.lastEffect = {
       id: makeId(6),
       playerId: null,
       title: '比赛结算',
-      text: '按“持有积分 + 奖杯账面积分”综合排名',
+      text: '积分榜按现有积分，奖牌榜按奖杯数量',
       tone: 'win',
       at: now(),
     };
@@ -954,6 +982,24 @@ class Room {
         await this.offerPurchase(player, tile);
       } else if (owner.id === player.id) {
         const trophy = owner.trophies.find((t) => t.tileId === tile.id);
+        if (this.hasItem(player, 'qingshen')) {
+          const useQingshen = await this.ask(player.id, {
+            type: 'choice',
+            title: '请神',
+            message: `到达自己的 ${tile.name}，是否使用「请神」再次获得本站冠军积分 +${tile.points}？`,
+            image: CARD_BY_KEY.qingshen.image,
+            options: [
+              { value: 'yes', label: '使用请神', tone: 'primary' },
+              { value: 'no', label: '不使用' },
+            ],
+          });
+          if (useQingshen === 'yes') {
+            this.removeItemByKey(player, 'qingshen');
+            player.points += tile.points;
+            this.effectLog(player, '请神', `再次获得 ${tile.name} 冠军，积分 +${tile.points}`, 'gain');
+            this.broadcast();
+          }
+        }
         if (trophy.streak < 3 && player.points >= tile.points) {
           const answer = await this.ask(player.id, {
             type: 'defend',
@@ -1340,6 +1386,35 @@ class Room {
       if (payer.eliminated || this.status !== 'playing') return 0;
     }
 
+    const blameCandidates = this.alivePlayers.filter(
+      (p) => p.id !== payer.id && (!options.owner || p.id !== options.owner.id)
+    );
+    if (
+      options.owner &&
+      options.allowBlame !== false &&
+      !payer.effects.blame &&
+      this.hasItem(payer, 'jiahuo') &&
+      blameCandidates.length > 0
+    ) {
+      const useBlame = await this.ask(payer.id, {
+        type: 'choice',
+        title: '嫁祸 · 使用',
+        message: `你要向 ${options.owner.name} 支付 ${amount} 积分，是否使用「嫁祸」让其他玩家代付？`,
+        image: CARD_BY_KEY.jiahuo.image,
+        options: [
+          { value: 'yes', label: '使用嫁祸', tone: 'primary' },
+          { value: 'no', label: '自己支付' },
+        ],
+      });
+      if (useBlame === 'yes') {
+        this.removeItemByKey(payer, 'jiahuo');
+        payer.effects.blame = true;
+        this.effectLog(payer, '嫁祸', '下一次支付时，可指定一人代付', 'info');
+        this.broadcast();
+      }
+      if (payer.eliminated || this.status !== 'playing') return 0;
+    }
+
     if (
       options.allowBlame !== false &&
       payer.effects.blame &&
@@ -1351,7 +1426,7 @@ class Room {
       if (candidates.length > 0) {
         const targetId = await this.ask(payer.id, {
           type: 'target',
-          title: '嫁祸',
+          title: '嫁祸 · 指定代付人',
           message: `下一次需支付 ${amount} 积分。指定一人替你支付，或自己支付。`,
           image: CARD_BY_KEY.jiahuo.image,
           options: [
@@ -1379,6 +1454,11 @@ class Room {
             return paid;
           }
         }
+        payer.effects.blame = false;
+        this.log(`${payer.name} 选择自己支付，嫁祸已用完`, 'info', payer.id);
+      } else {
+        payer.effects.blame = false;
+        this.log(`${payer.name} 没有可嫁祸的对象，嫁祸已用完`, 'info', payer.id);
       }
       if (payer.eliminated || this.status !== 'playing') return 0;
     }

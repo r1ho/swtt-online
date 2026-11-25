@@ -18,6 +18,7 @@
     seenEffectId: null,
     seenDiceSeq: 0,
     tokenEls: new Map(),
+    ownerEls: new Map(),
     displayPos: new Map(),
     animations: new Map(),
     pendingId: null,
@@ -438,6 +439,8 @@
     app.animations.clear();
     app.tokenEls.forEach((el) => el.remove());
     app.tokenEls.clear();
+    app.ownerEls.forEach((el) => el.remove());
+    app.ownerEls.clear();
     app.taken = new Set();
     app.roomInfo = null;
     app.seenMoveSeq = 0;
@@ -511,6 +514,7 @@
       : null;
 
     renderSidePanels();
+    renderBoardOwners();
 
     // 位置同步 + 移动动画
     syncDisplayPositions();
@@ -560,7 +564,6 @@
   function playerPanelHtml(player) {
     const isTurn = app.state.turnPlayerId === player.id && app.state.status === 'playing';
     const isMe = player.id === app.meId;
-    const usableItems = isMe && isTurn && app.state.phase === 'action' && !app.state.pending;
     const badges = [];
     if (isMe) badges.push('<span class="pp-badge mint">你</span>');
     if (player.isHost) badges.push('<span class="pp-badge">房主</span>');
@@ -603,15 +606,13 @@
       ? player.items.map((item) => {
           const card = cardByKey.get(item.key);
           if (!card) return '';
-          const autoOnly = item.key === 'fanshen' || item.key === 'dunwu';
-          const clickable = usableItems && !autoOnly;
-          const tag = clickable ? 'button' : 'span';
           return `
-            <${tag} class="item-btn${clickable ? ' usable' : ''}"
-              ${clickable ? `data-player-id="${escapeHtml(player.id)}" data-item-uid="${escapeHtml(item.uid)}"` : ''}
-              title="${escapeHtml(card.name)}：${escapeHtml(card.desc)}">
+            <button class="item-btn usable"
+              data-player-id="${escapeHtml(player.id)}"
+              data-item-uid="${escapeHtml(item.uid)}"
+              title="${escapeHtml(card.name)}：${escapeHtml(card.desc)}（点击查看大图）">
               <img src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}" draggable="false">
-            </${tag}>
+            </button>
           `;
         }).join('')
       : '<span class="pp-empty">—</span>';
@@ -725,6 +726,56 @@
     };
     app.animations.set(move.playerId, animation);
     animation.timer = setTimeout(step, 60);
+  }
+
+  function renderBoardOwners() {
+    const state = app.state;
+    if (!state) return;
+    const wrap = $('boardOwners');
+    if (!wrap) return;
+    const owners = new Map();
+    for (const player of state.players) {
+      if (player.eliminated) continue;
+      for (const trophy of player.trophies || []) {
+        if (!owners.has(trophy.tileId)) owners.set(trophy.tileId, player);
+      }
+    }
+
+    const seen = new Set();
+    for (const [tileId, player] of owners) {
+      const tile = tileOf(tileId);
+      if (!tile) continue;
+      seen.add(tileId);
+      let el = app.ownerEls.get(tileId);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'board-owner';
+        el.innerHTML = '<img alt="" draggable="false">';
+        wrap.appendChild(el);
+        app.ownerEls.set(tileId, el);
+      }
+      const img = el.querySelector('img');
+      if (img.getAttribute('src') !== player.avatar) img.src = player.avatar;
+      img.alt = player.name;
+      el.title = `${tile.name} · 持有者 ${player.name}`;
+      const position = ownerPosition(tile);
+      el.style.left = `${position.x}%`;
+      el.style.top = `${position.y}%`;
+    }
+    for (const [tileId, el] of app.ownerEls) {
+      if (!seen.has(tileId)) {
+        el.remove();
+        app.ownerEls.delete(tileId);
+      }
+    }
+  }
+
+  function ownerPosition(tile) {
+    let x = tile.x;
+    let y = tile.y;
+    if (tile.id >= 1 && tile.id <= 10) y -= 11.5;
+    else if (tile.id >= 19 && tile.id <= 28) y += 7.5;
+    return { x, y };
   }
 
   function renderTokens() {
@@ -1081,23 +1132,48 @@
       .map((id) => state.players.find((player) => player.id === id)?.name)
       .filter(Boolean);
     if (winners.length > 1) {
-      $('endTitle').textContent = `${winners.join('、')} 并列世一`;
+      $('endTitle').textContent = `${winners.join('、')} 并列积分榜第一`;
     } else if (winners.length === 1) {
-      $('endTitle').textContent = `${winners[0]} 获得世一头衔`;
+      $('endTitle').textContent = `${winners[0]} 积分榜第一`;
     } else {
       $('endTitle').textContent = '比赛结束';
     }
-    $('rankList').innerHTML = (state.rankings || []).map((row) => `
-      <div class="rank-row${row.rank === 1 ? ' first' : ''}" title="持有积分 ${formatPoints(row.points)} + 奖杯账面 ${formatPoints(row.trophyValue)}">
+
+    const pointsRows = state.pointsRankings || state.rankings || [];
+    $('pointsRankList').innerHTML = pointsRows.map((row) => `
+      <div class="rank-row${row.rank === 1 ? ' first' : ''}" title="现有积分 ${formatPoints(row.points)}">
         <div class="rank-no">${row.rank}</div>
         <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
-        <div class="rank-name">${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}</div>
+        <div class="rank-name">
+          ${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}
+        </div>
         <div class="rank-score">
-          <strong>${formatPoints(row.netWorth)}</strong>
-          <small>${formatPoints(row.points)} + ${formatPoints(row.trophyValue)}</small>
+          <strong>${formatPoints(row.points)}</strong>
+          <small>现有积分</small>
         </div>
       </div>
     `).join('');
+
+    const trophyRows = state.trophyRankings || [];
+    $('trophyRankList').innerHTML = trophyRows.map((row) => {
+      const names = (row.trophyNames || [])
+        .map((trophy) => `${escapeHtml(trophy.name)}${trophy.count > 1 ? ` ×${trophy.count}` : ''}`)
+        .join('、');
+      return `
+        <div class="rank-row trophy-row${row.rank === 1 ? ' first' : ''}" title="奖杯数量 ${row.trophies || 0}">
+          <div class="rank-no">${row.rank}</div>
+          <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
+          <div class="rank-name">
+            ${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}
+            <span class="rank-trophy-names">${names || '暂无奖杯'}</span>
+          </div>
+          <div class="rank-score">
+            <strong>${row.trophies || 0}</strong>
+            <small>个奖杯</small>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
   function handleControlAction(event) {
@@ -1132,15 +1208,7 @@
     }
     const button = event.target.closest('[data-item-uid]');
     if (!button) return;
-    if (button.dataset.playerId !== app.meId) {
-      showToast('只能使用自己的道具', 'error');
-      return;
-    }
-    if (app.state.phase !== 'action' || app.state.pending || app.state.turnPlayerId !== app.meId) {
-      showToast('只能在自己掷骰后的行动阶段使用道具', 'error');
-      return;
-    }
-    app.socket.emit('game:item', { uid: button.dataset.itemUid });
+    openItemCard(button.dataset.playerId, button.dataset.itemUid);
   }
 
   function startGame() {
@@ -1159,6 +1227,36 @@
         <button class="ghost-btn" data-close-modal type="button">关闭</button>
       </div>
     `, { locked: false });
+  }
+
+  function openItemCard(playerId, uid) {
+    const state = app.state;
+    const player = state?.players.find((p) => p.id === playerId);
+    const item = player?.items.find((i) => i.uid === uid);
+    const card = item ? cardByKey.get(item.key) : null;
+    if (!player || !item || !card) {
+      showToast('道具已不存在', 'error');
+      return;
+    }
+    const mine = player.id === app.meId;
+    const canUse = mine && state.turnPlayerId === app.meId && state.status === 'playing';
+    openModal(`
+      <div class="modal-title">${escapeHtml(card.name)}</div>
+      <div class="modal-message">${escapeHtml(card.desc)}</div>
+      <img class="item-card-image" src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}">
+      <div class="item-card-owner">持有者：${escapeHtml(player.name)}${mine ? '（你）' : ''}</div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">关闭</button>
+        ${canUse ? '<button class="primary-btn" id="useItemBtn" type="button">使用</button>' : ''}
+      </div>
+    `);
+    const useBtn = $('useItemBtn');
+    if (useBtn) {
+      useBtn.addEventListener('click', () => {
+        closeModal();
+        app.socket.emit('game:item', { uid });
+      });
+    }
   }
 
   function openCharacterCard(charKey) {

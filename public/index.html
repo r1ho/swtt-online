@@ -93,6 +93,7 @@
         <div class="board-shell">
           <div class="board" id="board">
             <img class="board-art" src="/assets/board.webp" alt="SWTT 大富翁棋盘" draggable="false">
+            <div class="board-owners" id="boardOwners"></div>
             <div class="board-tokens" id="boardTokens"></div>
             <div class="effect-banner" id="effectBanner"></div>
             <div class="turn-flag" id="turnFlag"></div>
@@ -122,9 +123,19 @@
     <div class="waiting-pill hidden" id="waitingPill"></div>
     <div class="end-overlay hidden" id="endOverlay">
       <div class="end-card">
-        <p class="end-kicker">SWTT · 综合结算</p>
+        <p class="end-kicker">SWTT · 最终结算</p>
         <h2 id="endTitle">比赛结束</h2>
-        <div class="rank-list" id="rankList"></div>
+        <p class="end-subtitle">积分榜按现有积分 · 奖牌榜按奖杯数量</p>
+        <div class="rank-columns">
+          <section class="rank-section">
+            <h3>积分榜</h3>
+            <div class="rank-list" id="pointsRankList"></div>
+          </section>
+          <section class="rank-section">
+            <h3>奖牌榜</h3>
+            <div class="rank-list trophy-rank-list" id="trophyRankList"></div>
+          </section>
+        </div>
         <button class="primary-btn" id="endLeaveBtn" type="button">离开房间</button>
       </div>
     </div>

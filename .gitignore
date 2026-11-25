@@ -1,0 +1,8 @@
+node_modules/
+server.out.log
+server.err.log
+shots-*.png
+crop_*.png
+bottom_*.png
+*.tmp
+.DS_Store

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#062f35">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <title>谁在水积分 · SWTT 海洋大富翁</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="landing" class="screen landing-screen">
+    <div class="landing-bg" aria-hidden="true"></div>
+    <div class="landing-top">
+      <div class="mini-brand">
+        <span class="brand-dot"></span>
+        <span>SWTT</span>
+      </div>
+      <button class="ghost-btn" id="landingRulesBtn" type="button">规则手册</button>
+    </div>
+
+    <main class="landing-main">
+      <header class="hero">
+        <p class="hero-kicker">SeaWorld Table Tennis</p>
+        <h1>谁在水积分</h1>
+        <p class="hero-sub">海洋生物乒乓球大富翁</p>
+      </header>
+
+      <section class="entry-card">
+        <div class="char-picker" id="charPicker" aria-label="选择角色"></div>
+        <div class="entry-actions">
+          <button class="primary-btn" id="createBtn" type="button">创建房间</button>
+          <div class="join-line">
+            <input id="joinCodeInput" class="code-input" maxlength="4" inputmode="text"
+                   autocomplete="off" spellcheck="false" placeholder="房间码" aria-label="房间码">
+            <button class="secondary-btn" id="joinBtn" type="button">加入房间</button>
+          </div>
+          <p class="join-hint" id="joinHint"></p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="lobby" class="screen lobby-screen hidden">
+    <header class="topbar">
+      <div class="topbar-brand">
+        <span class="brand-dot"></span>
+        <span>谁在水积分</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="ghost-btn" id="lobbyRulesBtn" type="button">规则手册</button>
+        <button class="ghost-btn danger" id="lobbyLeaveBtn" type="button">退出</button>
+      </div>
+    </header>
+    <main class="lobby-main">
+      <div class="room-ticket">
+        <span class="ticket-label">房间码</span>
+        <strong id="lobbyCode">----</strong>
+        <button class="copy-btn" id="copyCodeBtn" type="button" aria-label="复制房间码">复制</button>
+      </div>
+      <div class="lobby-seats" id="lobbySeats"></div>
+      <div class="lobby-footer">
+        <p class="lobby-status" id="lobbyStatus"></p>
+        <button class="primary-btn" id="startBtn" type="button">开始游戏</button>
+      </div>
+    </main>
+  </div>
+
+  <div id="game" class="screen game-screen hidden">
+    <header class="topbar game-topbar">
+      <div class="topbar-brand">
+        <span class="brand-dot"></span>
+        <span class="game-title">谁在水积分</span>
+        <span class="round-pill" id="roundPill">第 1 回合</span>
+      </div>
+      <div class="topbar-actions">
+        <span class="room-pill">房间 <strong id="gameCode">----</strong></span>
+        <button class="ghost-btn hidden" id="finishBtn" type="button">结算</button>
+        <button class="ghost-btn" id="gameRulesBtn" type="button">规则手册</button>
+        <button class="ghost-btn danger" id="gameLeaveBtn" type="button">退出</button>
+      </div>
+    </header>
+
+    <main class="game-main">
+      <aside class="side-stack left" id="leftStack"></aside>
+
+      <section class="table-column">
+        <div class="board-shell">
+          <div class="board" id="board">
+            <img class="board-art" src="/assets/board.webp" alt="SWTT 大富翁棋盘" draggable="false">
+            <div class="board-tokens" id="boardTokens"></div>
+            <div class="effect-banner" id="effectBanner"></div>
+            <div class="turn-flag" id="turnFlag"></div>
+          </div>
+        </div>
+
+        <div class="control-dock">
+          <div class="turn-info">
+            <div class="turn-avatar" id="turnAvatar"></div>
+            <div class="turn-copy">
+              <strong id="turnName">等待开始</strong>
+              <span id="turnHint">—</span>
+            </div>
+          </div>
+          <div class="dice-box" id="diceBox" aria-label="骰子">
+            <span class="dice-face" id="diceFace">?</span>
+          </div>
+          <div class="control-actions" id="controlActions"></div>
+        </div>
+
+        <div class="event-feed" id="eventFeed"></div>
+      </section>
+
+      <aside class="side-stack right" id="rightStack"></aside>
+    </main>
+
+    <div class="waiting-pill hidden" id="waitingPill"></div>
+    <div class="end-overlay hidden" id="endOverlay">
+      <div class="end-card">
+        <p class="end-kicker">SWTT · 世一头衔</p>
+        <h2 id="endTitle">比赛结束</h2>
+        <div class="rank-list" id="rankList"></div>
+        <button class="primary-btn" id="endLeaveBtn" type="button">离开房间</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="modalBackdrop">
+    <div class="modal-card" id="modalCard" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div class="pending-backdrop hidden" id="pendingBackdrop">
+    <div class="pending-card" id="pendingCard" role="dialog" aria-modal="true"></div>
+  </div>
+
+  <div class="toast-stack" id="toastStack"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

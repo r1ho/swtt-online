@@ -1,0 +1,384 @@
+'use strict';
+
+const path = require('path');
+const http = require('http');
+const express = require('express');
+const { Server } = require('socket.io');
+const {
+  CHARACTERS,
+  TILES,
+  CARDS,
+  INITIAL_POINTS,
+  MAX_PLAYERS,
+} = require('./src/config');
+const {
+  Room,
+  GameError,
+  makeId,
+  normalizeCode,
+  CODE_ALPHABET,
+} = require('./src/game');
+
+const PORT = Number(process.env.PORT) || 3000;
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  maxHttpBufferSize: 1e6,
+  pingTimeout: 30000,
+  pingInterval: 25000,
+});
+
+const rooms = new Map();
+const cleanupTimers = new Map();
+
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled rejection:', error);
+});
+
+app.disable('x-powered-by');
+app.use(express.json({ limit: '256kb' }));
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    maxAge: '7d',
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('.html') || filePath.endsWith('app.js') || filePath.endsWith('styles.css')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  })
+);
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    characters: CHARACTERS,
+    tiles: TILES,
+    cards: CARDS,
+    initialPoints: INITIAL_POINTS,
+    maxPlayers: MAX_PLAYERS,
+  });
+});
+
+app.get('/api/rooms/:code', (req, res) => {
+  const code = normalizeCode(req.params.code);
+  const room = rooms.get(code);
+  if (!room) {
+    res.status(404).json({ error: '房间不存在' });
+    return;
+  }
+  res.json({
+    code,
+    status: room.status,
+    playerCount: room.players.length,
+    onlineCount: room.players.filter((p) => p.online).length,
+    maxPlayers: MAX_PLAYERS,
+    availableCharacters: room.availableCharacters(),
+    hostName: room.playerById(room.hostId)?.name || '',
+  });
+});
+
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, rooms: rooms.size });
+});
+
+function makeCode() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    let code = '';
+    for (let i = 0; i < 4; i += 1) {
+      code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    }
+    if (!rooms.has(code)) return code;
+  }
+  throw new Error('无法生成房间码');
+}
+
+function getSocketRoom(socket) {
+  const code = socket.data.code;
+  if (!code) throw new GameError('你还没有加入房间');
+  const room = rooms.get(code);
+  if (!room) throw new GameError('房间已关闭');
+  const player = room.playerById(socket.data.playerId);
+  if (!player || player.token !== socket.data.token) {
+    throw new GameError('座位信息已失效');
+  }
+  return { room, player };
+}
+
+function bindSocket(socket, room, player) {
+  socket.data.code = room.code;
+  socket.data.playerId = player.id;
+  socket.data.token = player.token;
+  socket.join(room.code);
+}
+
+function scheduleRoomCleanup(room) {
+  if (cleanupTimers.has(room.code)) return;
+  const timer = setTimeout(() => {
+    cleanupTimers.delete(room.code);
+    const current = rooms.get(room.code);
+    if (!current) return;
+    if (current.players.every((p) => !p.online)) {
+      rooms.delete(room.code);
+      io.to(room.code).emit('room:closed');
+    }
+  }, 30 * 60 * 1000);
+  timer.unref?.();
+  cleanupTimers.set(room.code, timer);
+}
+
+function clearRoomCleanup(code) {
+  const timer = cleanupTimers.get(code);
+  if (timer) {
+    clearTimeout(timer);
+    cleanupTimers.delete(code);
+  }
+}
+
+function sendError(socket, error) {
+  const message = error instanceof GameError ? error.message : '操作失败';
+  if (!(error instanceof GameError)) {
+    console.error(error);
+  }
+  socket.emit('toast', { type: 'error', message });
+}
+
+function handleAsync(socket, fn) {
+  Promise.resolve()
+    .then(fn)
+    .catch((error) => sendError(socket, error));
+}
+
+io.on('connection', (socket) => {
+  socket.on('room:create', (payload, ack) => {
+    try {
+      const character = CHARACTERS.find((c) => c.key === payload?.charKey);
+      if (!character) throw new GameError('请选择一个角色');
+      const code = makeCode();
+      const room = new Room(code, io, character);
+      const host = room.players[0];
+      rooms.set(code, room);
+      bindSocket(socket, room, host);
+      clearRoomCleanup(code);
+      room.broadcast();
+      ack?.({
+        ok: true,
+        code,
+        playerId: host.id,
+        token: host.token,
+        state: room.publicState(),
+      });
+    } catch (error) {
+      if (!(error instanceof GameError)) console.error(error);
+      ack?.({ ok: false, error: error.message || '创建失败' });
+    }
+  });
+
+  socket.on('room:join', (payload, ack) => {
+    try {
+      const code = normalizeCode(payload?.code);
+      const character = CHARACTERS.find((c) => c.key === payload?.charKey);
+      if (!code || !character) throw new GameError('请填写房间码并选择角色');
+      const room = rooms.get(code);
+      if (!room) throw new GameError('房间不存在');
+      if (room.status !== 'waiting') throw new GameError('游戏已经开始');
+      const player = room.addPlayer(character);
+      clearRoomCleanup(code);
+      bindSocket(socket, room, player);
+      room.broadcast();
+      ack?.({
+        ok: true,
+        code,
+        playerId: player.id,
+        token: player.token,
+        state: room.publicState(),
+      });
+    } catch (error) {
+      if (!(error instanceof GameError)) console.error(error);
+      ack?.({ ok: false, error: error.message || '加入失败' });
+    }
+  });
+
+  socket.on('room:rejoin', (payload, ack) => {
+    try {
+      const code = normalizeCode(payload?.code);
+      const room = rooms.get(code);
+      if (!room) throw new GameError('房间已关闭');
+      const player = room.restorePlayer(payload?.token);
+      clearRoomCleanup(code);
+      bindSocket(socket, room, player);
+      player.online = true;
+      if (player._disconnectTimer) {
+        clearTimeout(player._disconnectTimer);
+        player._disconnectTimer = null;
+      }
+      room.log(`${player.name} 重新连接`, 'system');
+      room.broadcast();
+      ack?.({
+        ok: true,
+        code,
+        playerId: player.id,
+        token: player.token,
+        state: room.publicState(),
+      });
+    } catch (error) {
+      if (!(error instanceof GameError)) console.error(error);
+      ack?.({ ok: false, error: error.message || '重连失败' });
+    }
+  });
+
+  socket.on('room:state', () => {
+    try {
+      const { room } = getSocketRoom(socket);
+      socket.emit('room:state', room.publicState());
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('room:leave', () => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      const code = room.code;
+      room.forfeit(player.id);
+      socket.leave(code);
+      socket.data.code = null;
+      socket.data.playerId = null;
+      socket.data.token = null;
+      if (room.players.length === 0) {
+        rooms.delete(code);
+        clearRoomCleanup(code);
+      } else if (room.players.every((p) => !p.online)) {
+        scheduleRoomCleanup(room);
+      }
+      socket.emit('room:left');
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:start', () => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.start(player.id);
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:roll', () => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.roll(player.id).catch((error) => sendError(socket, error));
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:endTurn', () => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.endTurn(player.id).catch((error) => sendError(socket, error));
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:item', (payload) => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.useItem(player.id, payload?.uid, payload).catch((error) => sendError(socket, error));
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:sell', (payload) => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.sellTrophy(player.id, payload?.tileId);
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:blade', (payload) => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.challengeBlade(player.id, payload?.targetId).catch((error) => sendError(socket, error));
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:borrow', (payload) => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.createLoan(player.id, payload).catch((error) => sendError(socket, error));
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('game:finish', () => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.finishByHost(player.id);
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('pending:respond', (payload) => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.respond(player.id, payload?.id, payload?.value);
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    const code = socket.data.code;
+    const playerId = socket.data.playerId;
+    if (!code || !playerId) return;
+    const room = rooms.get(code);
+    if (!room) return;
+    const player = room.playerById(playerId);
+    if (!player) return;
+    player.online = false;
+    room.log(`${player.name} 暂时离线`, 'system');
+    room.broadcast();
+
+    if (room.status === 'waiting') {
+      if (player._disconnectTimer) clearTimeout(player._disconnectTimer);
+      player._disconnectTimer = setTimeout(() => {
+        player._disconnectTimer = null;
+        if (!player.online) {
+          room.forfeit(player.id);
+          if (room.players.length === 0) {
+            rooms.delete(room.code);
+            clearRoomCleanup(room.code);
+          }
+        }
+      }, 60 * 1000);
+      player._disconnectTimer.unref?.();
+    } else if (room.status === 'playing' && room.hostId === player.id) {
+      if (player._hostTimer) clearTimeout(player._hostTimer);
+      player._hostTimer = setTimeout(() => {
+        player._hostTimer = null;
+        if (!player.online && room.status === 'playing' && room.hostId === player.id) {
+          room.transferHost();
+          room.broadcast();
+        }
+      }, 60 * 1000);
+      player._hostTimer.unref?.();
+    }
+
+    if (room.players.every((p) => !p.online)) {
+      scheduleRoomCleanup(room);
+    }
+  });
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`SWTT online listening on http://localhost:${PORT}`);
+});

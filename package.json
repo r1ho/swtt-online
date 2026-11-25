@@ -1,0 +1,21 @@
+{
+  "name": "swtt-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "谁在水积分 · SWTT 海洋大富翁 在线房间版",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}

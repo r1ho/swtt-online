@@ -1,0 +1,1208 @@
+'use strict';
+
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const SESSION_KEY = 'swtt_online_session_v1';
+
+  const app = {
+    config: null,
+    socket: null,
+    state: null,
+    session: loadSession(),
+    meId: null,
+    selectedChar: null,
+    taken: new Set(),
+    roomInfo: null,
+    checkSeq: 0,
+    seenMoveSeq: 0,
+    seenEffectId: null,
+    seenDiceSeq: 0,
+    tokenEls: new Map(),
+    displayPos: new Map(),
+    animations: new Map(),
+    pendingId: null,
+    pendingSubmitting: false,
+    bannerTimer: null,
+    feedRendered: '',
+    rejoining: false,
+    modalLocked: false,
+    initialized: false,
+  };
+
+  const cardByKey = new Map();
+
+  function loadSession() {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data?.code || !data?.token) return null;
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveSession(session) {
+    app.session = session;
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } catch {
+      // 忽略浏览器隐私模式下的存储失败
+    }
+  }
+
+  function forgetSession() {
+    app.session = null;
+    try {
+      localStorage.removeItem(SESSION_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }[ch]));
+  }
+
+  function showToast(message, type = 'info') {
+    if (!message) return;
+    const stack = $('toastStack');
+    const el = document.createElement('div');
+    el.className = `toast${type === 'error' ? ' error' : ''}`;
+    el.textContent = message;
+    stack.appendChild(el);
+    setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translateX(18px)';
+      setTimeout(() => el.remove(), 220);
+    }, 3200);
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(
+        () => showToast('房间码已复制'),
+        () => fallbackCopy(text)
+      );
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    try {
+      document.execCommand('copy');
+      showToast('房间码已复制');
+    } catch {
+      showToast('复制失败，请手动记录房间码', 'error');
+    }
+    input.remove();
+  }
+
+  async function init() {
+    try {
+      const res = await fetch('/api/config');
+      if (!res.ok) throw new Error('配置加载失败');
+      app.config = await res.json();
+      app.config.cards = app.config.cards || {};
+      Object.values(app.config.cards).flat().forEach((card) => cardByKey.set(card.key, card));
+    } catch (error) {
+      showToast('页面资源加载失败，请刷新重试', 'error');
+      return;
+    }
+
+    app.selectedChar = app.config.characters[0]?.key || null;
+    renderCharPicker();
+    bindStaticEvents();
+    setupSocket();
+    app.initialized = true;
+
+    if (app.session) {
+      // 等 socket 连接后再尝试回到原座位
+      if (app.socket.connected) rejoinRoom();
+    }
+  }
+
+  function renderCharPicker() {
+    const wrap = $('charPicker');
+    if (!app.config) return;
+    wrap.innerHTML = app.config.characters.map((char) => {
+      const taken = app.taken.has(char.key);
+      const selected = app.selectedChar === char.key;
+      return `
+        <button type="button" class="char-choice${selected ? ' selected' : ''}${taken ? ' taken' : ''}"
+                data-char="${escapeHtml(char.key)}" ${taken ? 'disabled' : ''}
+                title="${escapeHtml(char.name)}">
+          <img src="${escapeHtml(char.avatar)}" alt="${escapeHtml(char.name)}" draggable="false">
+          <span>${escapeHtml(char.name)}</span>
+        </button>
+      `;
+    }).join('');
+    const createBtn = $('createBtn');
+    if (createBtn) createBtn.disabled = !(app.config?.characters?.length);
+  }
+
+  function selectCharacter(key) {
+    if (app.taken.has(key)) return;
+    app.selectedChar = key;
+    renderCharPicker();
+  }
+
+  function bindStaticEvents() {
+    $('charPicker').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-char]');
+      if (!button || button.disabled) return;
+      selectCharacter(button.dataset.char);
+    });
+
+    $('createBtn').addEventListener('click', createRoom);
+    $('joinBtn').addEventListener('click', joinRoom);
+
+    const codeInput = $('joinCodeInput');
+    codeInput.addEventListener('input', () => {
+      const cursor = codeInput.selectionStart;
+      codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+      if (cursor !== null) codeInput.setSelectionRange(codeInput.value.length, codeInput.value.length);
+      if (codeInput.value.length === 4) {
+        checkRoom(codeInput.value);
+      } else {
+        app.roomInfo = null;
+        app.taken = new Set();
+        setJoinHint('');
+        $('joinBtn').disabled = true;
+        if (!app.selectedChar) app.selectedChar = app.config.characters[0]?.key || null;
+        renderCharPicker();
+      }
+    });
+    codeInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        joinRoom();
+      }
+    });
+
+    $('landingRulesBtn').addEventListener('click', openRules);
+    $('lobbyRulesBtn').addEventListener('click', openRules);
+    $('gameRulesBtn').addEventListener('click', openRules);
+    $('copyCodeBtn').addEventListener('click', () => copyText(app.state?.code || ''));
+    $('lobbyLeaveBtn').addEventListener('click', () => confirmLeave());
+    $('gameLeaveBtn').addEventListener('click', () => confirmLeave());
+    $('endLeaveBtn').addEventListener('click', leaveRoom);
+    $('startBtn').addEventListener('click', startGame);
+    $('finishBtn').addEventListener('click', confirmFinish);
+
+    $('controlActions').addEventListener('click', handleControlAction);
+    $('leftStack').addEventListener('click', handlePanelClick);
+    $('rightStack').addEventListener('click', handlePanelClick);
+    $('boardTokens').addEventListener('click', (event) => {
+      const token = event.target.closest('[data-player-id]');
+      if (!token) return;
+      const player = app.state?.players.find((p) => p.id === token.dataset.playerId);
+      if (player) {
+        const count = player.trophies.reduce((sum, trophy) => sum + (trophy.streak || 1), 0);
+        showToast(`${player.name} · ${player.points} 积分 · ${count} 个奖杯`);
+      }
+    });
+
+    $('modalBackdrop').addEventListener('click', (event) => {
+      if (event.target === $('modalBackdrop') && !app.modalLocked) closeModal();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !app.modalLocked) closeModal();
+    });
+  }
+
+  function setupSocket() {
+    app.socket = io({ transports: ['websocket', 'polling'] });
+
+    app.socket.on('connect', () => {
+      if (app.session) rejoinRoom();
+    });
+
+    app.socket.on('room:state', (state) => {
+      if (!app.session) return;
+      applyState(state);
+    });
+
+    app.socket.on('toast', (payload) => {
+      showToast(payload?.message || '操作失败', payload?.type || 'error');
+      app.pendingSubmitting = false;
+    });
+
+    app.socket.on('room:left', () => {
+      forgetSession();
+      clearToLanding();
+    });
+
+    app.socket.on('room:closed', () => {
+      forgetSession();
+      showToast('房间已关闭', 'error');
+      clearToLanding();
+    });
+
+    app.socket.on('disconnect', () => {
+      if (app.state) showToast('连接暂时中断，正在重连…', 'error');
+    });
+  }
+
+  async function checkRoom(code) {
+    const seq = ++app.checkSeq;
+    setJoinHint('');
+    $('joinBtn').disabled = true;
+    try {
+      const res = await fetch(`/api/rooms/${encodeURIComponent(code)}`);
+      if (seq !== app.checkSeq) return;
+      if (!res.ok) {
+        app.roomInfo = null;
+        app.taken = new Set();
+        setJoinHint('房间不存在');
+        renderCharPicker();
+        return;
+      }
+      const info = await res.json();
+      if (seq !== app.checkSeq) return;
+      app.roomInfo = info;
+      const takenKeys = new Set(
+        app.config.characters
+          .filter((char) => !info.availableCharacters.some((available) => available.key === char.key))
+          .map((char) => char.key)
+      );
+      app.taken = takenKeys;
+      if (!app.selectedChar || app.taken.has(app.selectedChar)) {
+        app.selectedChar = info.availableCharacters[0]?.key || null;
+      }
+      renderCharPicker();
+
+      if (info.status !== 'waiting') {
+        setJoinHint('游戏已开始');
+        $('joinBtn').disabled = true;
+      } else if (info.playerCount >= info.maxPlayers) {
+        setJoinHint('房间已满');
+        $('joinBtn').disabled = true;
+      } else {
+        setJoinHint(`${info.code} · ${info.playerCount}/${info.maxPlayers}`);
+        $('joinBtn').disabled = !app.selectedChar;
+      }
+    } catch {
+      if (seq !== app.checkSeq) return;
+      setJoinHint('无法连接房间');
+    }
+  }
+
+  function setJoinHint(text) {
+    $('joinHint').textContent = text;
+  }
+
+  async function createRoom() {
+    // 新建房间不受当前查看的加入房间角色占用影响
+    app.taken = new Set();
+    if (!app.selectedChar || app.taken.has(app.selectedChar)) {
+      app.selectedChar = app.config.characters[0]?.key || null;
+    }
+    renderCharPicker();
+    if (!app.selectedChar) {
+      showToast('请先选择角色', 'error');
+      return;
+    }
+    const button = $('createBtn');
+    button.disabled = true;
+    app.socket.emit('room:create', { charKey: app.selectedChar }, (result) => {
+      button.disabled = false;
+      if (!result?.ok) {
+        showToast(result?.error || '创建失败', 'error');
+        return;
+      }
+      saveSession({
+        code: result.code,
+        token: result.token,
+        playerId: result.playerId,
+      });
+      applyState(result.state);
+    });
+  }
+
+  async function joinRoom() {
+    const code = $('joinCodeInput').value.trim().toUpperCase();
+    if (code.length !== 4) {
+      showToast('请输入 4 位房间码', 'error');
+      return;
+    }
+    if (!app.selectedChar) {
+      showToast('请先选择角色', 'error');
+      return;
+    }
+    const button = $('joinBtn');
+    button.disabled = true;
+    app.socket.emit('room:join', { code, charKey: app.selectedChar }, (result) => {
+      button.disabled = false;
+      if (!result?.ok) {
+        showToast(result?.error || '加入失败', 'error');
+        checkRoom(code);
+        return;
+      }
+      saveSession({
+        code: result.code,
+        token: result.token,
+        playerId: result.playerId,
+      });
+      applyState(result.state);
+    });
+  }
+
+  function rejoinRoom() {
+    if (!app.session || app.rejoining) return;
+    app.rejoining = true;
+    app.socket.emit('room:rejoin', { code: app.session.code, token: app.session.token }, (result) => {
+      app.rejoining = false;
+      if (!result?.ok) {
+        const message = result?.error || '';
+        forgetSession();
+        clearToLanding();
+        if (message && message !== '房间已关闭') showToast(message, 'error');
+        return;
+      }
+      saveSession({
+        code: result.code,
+        token: result.token,
+        playerId: result.playerId,
+      });
+      applyState(result.state);
+    });
+  }
+
+  function applyState(state) {
+    if (!state) return;
+    const me = state.players.find((player) => player.id === app.session?.playerId);
+    if (!me) {
+      forgetSession();
+      clearToLanding();
+      return;
+    }
+    const firstState = app.state === null;
+    app.meId = me.id;
+    app.state = state;
+    if (firstState && state.lastMove?.seq) app.seenMoveSeq = state.lastMove.seq;
+    if (firstState && state.lastDice?.seq) app.seenDiceSeq = state.lastDice.seq;
+    if (firstState) app.seenEffectId = state.lastEffect?.id || '__none__';
+
+    if (state.status === 'waiting') {
+      showScreen('lobby');
+      renderLobby();
+    } else {
+      showScreen('game');
+      renderGame();
+    }
+  }
+
+  function showScreen(name) {
+    $('landing').classList.toggle('hidden', name !== 'landing');
+    $('lobby').classList.toggle('hidden', name !== 'lobby');
+    $('game').classList.toggle('hidden', name !== 'game');
+  }
+
+  function clearToLanding() {
+    app.state = null;
+    app.meId = null;
+    app.pendingId = null;
+    app.pendingSubmitting = false;
+    app.displayPos.clear();
+    app.animations.forEach((animation) => clearTimeout(animation.timer));
+    app.animations.clear();
+    app.tokenEls.forEach((el) => el.remove());
+    app.tokenEls.clear();
+    app.taken = new Set();
+    app.roomInfo = null;
+    app.seenMoveSeq = 0;
+    app.seenEffectId = null;
+    app.seenDiceSeq = 0;
+    app.feedRendered = '';
+    closeModal();
+    $('pendingBackdrop').classList.add('hidden');
+    $('endOverlay').classList.add('hidden');
+    $('waitingPill').classList.add('hidden');
+    $('joinCodeInput').value = '';
+    setJoinHint('');
+    renderCharPicker();
+    showScreen('landing');
+  }
+
+  function renderLobby() {
+    const state = app.state;
+    if (!state) return;
+    $('lobbyCode').textContent = state.code;
+
+    const me = state.players.find((player) => player.id === app.meId);
+    const slots = [];
+    for (let i = 0; i < app.config.maxPlayers; i += 1) {
+      const player = state.players[i];
+      if (player) {
+        slots.push(`
+          <div class="seat filled ${player.online ? '' : 'offline'}">
+            ${player.online ? '' : '<span class="seat-offline">离线</span>'}
+            <img src="${escapeHtml(player.avatar)}" alt="${escapeHtml(player.name)}" draggable="false">
+            <span class="seat-name">${escapeHtml(player.name)}</span>
+            <span class="seat-tag">${player.isHost ? '房主' : '选手'}</span>
+          </div>
+        `);
+      } else {
+        slots.push(`
+          <div class="seat">
+            <span class="seat-empty">+</span>
+            <span class="seat-name" style="color:rgba(255,247,227,.3)">空位</span>
+          </div>
+        `);
+      }
+    }
+    $('lobbySeats').innerHTML = slots.join('');
+
+    const onlineCount = state.players.filter((player) => player.online).length;
+    const isHost = me?.isHost;
+    const startBtn = $('startBtn');
+    if (isHost) {
+      startBtn.classList.remove('hidden');
+      startBtn.disabled = onlineCount < 2;
+      startBtn.textContent = '开始游戏';
+      $('lobbyStatus').textContent =
+        onlineCount < 2 ? '至少需要 2 名在线玩家' : `${onlineCount}/${app.config.maxPlayers} 在线`;
+    } else {
+      startBtn.classList.add('hidden');
+      $('lobbyStatus').textContent = '等待房主开始';
+    }
+  }
+
+  function renderGame() {
+    const state = app.state;
+    if (!state) return;
+    $('gameCode').textContent = state.code;
+    $('roundPill').textContent = `第 ${state.round} 回合`;
+
+    const me = state.players.find((player) => player.id === app.meId);
+    const current = state.players.find((player) => player.id === state.turnPlayerId);
+    const pendingPlayer = state.pending
+      ? state.players.find((player) => player.id === state.pending.playerId)
+      : null;
+
+    renderSidePanels();
+
+    // 位置同步 + 移动动画
+    syncDisplayPositions();
+    if (state.lastMove) handleMove(state.lastMove);
+    renderTokens();
+
+    const turnFlag = $('turnFlag');
+    if (current && state.status === 'playing') {
+      const tile = tileOf(current.pos);
+      turnFlag.style.left = `${tile.x}%`;
+      turnFlag.style.top = `${tile.y}%`;
+      turnFlag.classList.remove('hidden');
+    } else {
+      turnFlag.classList.add('hidden');
+    }
+
+    renderTurnInfo(me, current, pendingPlayer);
+    renderDice(state);
+    renderControls(me, current, pendingPlayer);
+    renderFeed(state);
+    renderPending();
+    renderEnd(state);
+    updateEffectBanner(state);
+
+    $('finishBtn').classList.toggle('hidden', !(me?.isHost && state.status === 'playing'));
+
+    const waitingPill = $('waitingPill');
+    if (state.pending && state.pending.playerId !== app.meId) {
+      waitingPill.textContent = `等待 ${pendingPlayer?.name || '玩家'} 操作…`;
+      waitingPill.classList.remove('hidden');
+    } else {
+      waitingPill.classList.add('hidden');
+    }
+  }
+
+  function renderSidePanels() {
+    const state = app.state;
+    if (!state) return;
+    const players = state.players;
+    const split = Math.ceil(players.length / 2);
+    const left = players.slice(0, split);
+    const right = players.slice(split);
+    $('leftStack').innerHTML = left.map(playerPanelHtml).join('');
+    $('rightStack').innerHTML = right.map(playerPanelHtml).join('');
+  }
+
+  function playerPanelHtml(player) {
+    const isTurn = app.state.turnPlayerId === player.id && app.state.status === 'playing';
+    const isMe = player.id === app.meId;
+    const usableItems = isMe && isTurn && app.state.phase === 'action' && !app.state.pending;
+    const badges = [];
+    if (isMe) badges.push('<span class="pp-badge mint">你</span>');
+    if (player.isHost) badges.push('<span class="pp-badge">房主</span>');
+    if (player.skipTurns > 0) badges.push(`<span class="pp-badge red">暂停×${player.skipTurns}</span>`);
+    if (player.eliminated) badges.push('<span class="pp-badge red">已退出</span>');
+
+    const trophies = player.trophies.length
+      ? player.trophies.map((trophy) => {
+          const count = Math.max(1, trophy.streak || 1);
+          const pips = [1, 2, 3].map((n) => `<i class="${n <= count ? 'on' : ''}"></i>`).join('');
+          return `
+            <span class="trophy-chip" title="${escapeHtml(trophy.name)} · ${trophy.points} 积分 · ${count}/3 个奖杯">
+              <span class="trophy-name">${escapeHtml(trophy.short || trophy.name)}</span>
+              <span class="trophy-pips">${pips}</span>
+            </span>
+          `;
+        }).join('')
+      : '<span class="pp-empty">—</span>';
+
+    const effects = player.effects.length
+      ? player.effects.map((effect) => `
+          <span class="effect-chip" title="${escapeHtml(effect.name)}">
+            ${effect.image ? `<img src="${escapeHtml(effect.image)}" alt="">` : ''}${escapeHtml(effect.name)}
+          </span>
+        `).join('')
+      : '<span class="pp-empty">—</span>';
+
+    const items = player.items.length
+      ? player.items.map((item) => {
+          const card = cardByKey.get(item.key);
+          if (!card) return '';
+          const autoOnly = item.key === 'fanshen' || item.key === 'dunwu';
+          const clickable = usableItems && !autoOnly;
+          const tag = clickable ? 'button' : 'span';
+          return `
+            <${tag} class="item-btn${clickable ? ' usable' : ''}"
+              ${clickable ? `data-player-id="${escapeHtml(player.id)}" data-item-uid="${escapeHtml(item.uid)}"` : ''}
+              title="${escapeHtml(card.name)}：${escapeHtml(card.desc)}">
+              <img src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}" draggable="false">
+            </${tag}>
+          `;
+        }).join('')
+      : '<span class="pp-empty">—</span>';
+
+    const loans = activeLoansFor(player.id);
+
+    return `
+      <article class="player-panel${isTurn ? ' is-turn' : ''}${isMe ? ' is-me' : ''}${player.eliminated ? ' eliminated' : ''}"
+               style="--p-color:${escapeHtml(player.color)}">
+        ${player.online ? '' : '<span class="pp-offline" title="离线"></span>'}
+        <div class="pp-head">
+          <div class="pp-avatar"><img src="${escapeHtml(player.avatar)}" alt="${escapeHtml(player.name)}" draggable="false"></div>
+          <div class="pp-identity">
+            <div class="pp-name">${escapeHtml(player.name)}</div>
+            <div class="pp-sub">${escapeHtml(player.country)} · ${escapeHtml(player.language)}</div>
+          </div>
+          <div class="pp-points">
+            <strong class="${player.points <= 500 ? 'low' : ''}">${formatPoints(player.points)}</strong>
+            <span>积分</span>
+          </div>
+        </div>
+        ${badges.length ? `<div class="pp-badges">${badges.join('')}</div>` : ''}
+        <div class="pp-section">
+          <span class="pp-section-label">奖杯</span>
+          <div class="trophy-list">${trophies}</div>
+        </div>
+        <div class="pp-section">
+          <span class="pp-section-label">效果</span>
+          <div class="effect-list">${effects}</div>
+        </div>
+        <div class="pp-section">
+          <span class="pp-section-label">道具</span>
+          <div class="item-list">${items}</div>
+        </div>
+        ${loans ? `<div class="pp-loan" title="${escapeHtml(loans.title)}">${escapeHtml(loans.text)}</div>` : ''}
+      </article>
+    `;
+  }
+
+  function activeLoansFor(playerId) {
+    const state = app.state;
+    if (!state?.loans?.length) return null;
+    const active = state.loans.filter((loan) => loan.status === 'active' && (loan.borrowerId === playerId || loan.lenderId === playerId));
+    if (!active.length) return null;
+    const parts = [];
+    const titles = [];
+    for (const loan of active) {
+      const otherId = loan.borrowerId === playerId ? loan.lenderId : loan.borrowerId;
+      const other = state.players.find((player) => player.id === otherId);
+      const total = Math.ceil(loan.principal * (1 + loan.interest / 100));
+      const due = Math.max(0, loan.dueRound - state.round);
+      if (loan.borrowerId === playerId) {
+        parts.push(`欠 ${other?.name || '未知'} ${total}（${due} 回合）`);
+        titles.push(`借款 ${loan.principal}，利息 ${loan.interest}%，到期需还 ${total}`);
+      } else {
+        parts.push(`贷出 ${other?.name || '未知'} ${loan.principal}`);
+        titles.push(`利息 ${loan.interest}%，${due} 回合后到期`);
+      }
+    }
+    return { text: parts.join(' / '), title: titles.join('；') };
+  }
+
+  function formatPoints(points) {
+    return Number.isInteger(points) ? String(points) : Number(points).toFixed(1);
+  }
+
+  function tileOf(pos) {
+    return app.config.tiles[((pos % app.config.tiles.length) + app.config.tiles.length) % app.config.tiles.length];
+  }
+
+  function syncDisplayPositions() {
+    if (!app.state) return;
+    const seen = new Set();
+    for (const player of app.state.players) {
+      seen.add(player.id);
+      if (!app.animations.has(player.id)) {
+        app.displayPos.set(player.id, player.pos);
+      }
+    }
+    for (const id of [...app.displayPos.keys()]) {
+      if (!seen.has(id)) app.displayPos.delete(id);
+    }
+  }
+
+  function handleMove(move) {
+    if (!move || !move.playerId || move.seq === app.seenMoveSeq) return;
+    app.seenMoveSeq = move.seq;
+    const player = app.state.players.find((p) => p.id === move.playerId);
+    if (!player) return;
+    if (app.animations.has(move.playerId)) {
+      clearTimeout(app.animations.get(move.playerId).timer);
+      app.animations.delete(move.playerId);
+    }
+    app.displayPos.set(move.playerId, Number.isInteger(move.from) ? move.from : player.pos);
+    renderTokenPositions();
+
+    const path = Array.isArray(move.path) && move.path.length ? move.path : [move.to];
+    let index = 0;
+    const animation = { timer: null };
+    const step = () => {
+      if (index < path.length) {
+        app.displayPos.set(move.playerId, path[index]);
+        index += 1;
+        renderTokenPositions();
+        animation.timer = setTimeout(step, 105);
+      } else {
+        app.displayPos.set(move.playerId, player.pos);
+        app.animations.delete(move.playerId);
+        renderTokenPositions();
+      }
+    };
+    app.animations.set(move.playerId, animation);
+    animation.timer = setTimeout(step, 60);
+  }
+
+  function renderTokens() {
+    if (!app.state) return;
+    const wrap = $('boardTokens');
+    const state = app.state;
+    const seen = new Set();
+    for (const player of state.players) {
+      seen.add(player.id);
+      let el = app.tokenEls.get(player.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'token';
+        el.dataset.playerId = player.id;
+        el.innerHTML = `<img src="${escapeHtml(player.avatar)}" alt="${escapeHtml(player.name)}" draggable="false">`;
+        wrap.appendChild(el);
+        app.tokenEls.set(player.id, el);
+      }
+      el.style.setProperty('--player-color', player.color);
+      el.classList.toggle('active', player.id === state.turnPlayerId && state.status === 'playing');
+      el.classList.toggle('offline', !player.online);
+      el.classList.toggle('hidden', Boolean(player.eliminated));
+      el.title = `${player.name} · ${player.points} 积分`;
+    }
+    for (const [id, el] of app.tokenEls) {
+      if (!seen.has(id)) {
+        el.remove();
+        app.tokenEls.delete(id);
+      }
+    }
+    renderTokenPositions();
+  }
+
+  function renderTokenPositions() {
+    if (!app.state) return;
+    const groups = new Map();
+    for (const player of app.state.players) {
+      if (player.eliminated) continue;
+      const pos = app.displayPos.get(player.id);
+      if (!Number.isInteger(pos)) continue;
+      if (!groups.has(pos)) groups.set(pos, []);
+      groups.get(pos).push(player);
+    }
+    for (const [pos, players] of groups) {
+      const tile = tileOf(pos);
+      const offsets = tokenOffsets(players.length);
+      players.forEach((player, index) => {
+        const el = app.tokenEls.get(player.id);
+        if (!el) return;
+        const offset = offsets[index] || { x: 0, y: 0 };
+        el.style.left = `${tile.x + offset.x}%`;
+        el.style.top = `${tile.y + offset.y}%`;
+      });
+    }
+  }
+
+  function tokenOffsets(count) {
+    if (count <= 1) return [{ x: 0, y: 0 }];
+    if (count === 2) return [{ x: -1.35, y: -0.6 }, { x: 1.35, y: 0.6 }];
+    if (count === 3) return [{ x: -1.8, y: 0.6 }, { x: 0, y: -1.1 }, { x: 1.8, y: 0.6 }];
+    if (count === 4) return [{ x: -1.35, y: -1.1 }, { x: 1.35, y: -1.1 }, { x: -1.35, y: 1.1 }, { x: 1.35, y: 1.1 }];
+    const grid = [
+      { x: -2, y: -1.3 }, { x: 0, y: -1.3 }, { x: 2, y: -1.3 },
+      { x: -2, y: 1.3 }, { x: 0, y: 1.3 }, { x: 2, y: 1.3 },
+      { x: -1, y: 2.2 }, { x: 1, y: 2.2 },
+    ];
+    return grid.slice(0, count);
+  }
+
+  function renderTurnInfo(me, current, pendingPlayer) {
+    const avatar = $('turnAvatar');
+    const name = $('turnName');
+    const hint = $('turnHint');
+    const state = app.state;
+    if (current) {
+      avatar.innerHTML = `<img src="${escapeHtml(current.avatar)}" alt="${escapeHtml(current.name)}" draggable="false">`;
+      name.textContent = current.id === app.meId ? '你的回合' : `${current.name} 的回合`;
+    } else {
+      avatar.innerHTML = '';
+      name.textContent = '比赛结束';
+    }
+    if (state.status === 'ended') {
+      hint.textContent = '比赛结算完成';
+    } else if (state.pending) {
+      hint.textContent = state.pending.playerId === app.meId ? '请完成弹窗操作' : `等待 ${pendingPlayer?.name || '玩家'} 操作`;
+    } else if (!current) {
+      hint.textContent = '';
+    } else if (!current.online) {
+      hint.textContent = '该玩家暂时离线';
+    } else if (current.id !== app.meId) {
+      hint.textContent = '等待对方行动';
+    } else if (state.phase === 'awaitRoll') {
+      hint.textContent = '点击骰子前进';
+    } else if (state.phase === 'action') {
+      hint.textContent = '可出牌，或结束回合';
+    } else if (state.phase === 'skipped') {
+      hint.textContent = '本回合暂停';
+    } else {
+      hint.textContent = '结算中…';
+    }
+  }
+
+  function renderDice(state) {
+    const face = $('diceFace');
+    const box = $('diceBox');
+    const value = state.lastDice?.value;
+    face.textContent = value || '?';
+    box.classList.toggle('rolling', state.phase === 'rolling');
+  }
+
+  function renderControls(me, current, pendingPlayer) {
+    const wrap = $('controlActions');
+    const state = app.state;
+    if (state.status === 'ended') {
+      wrap.innerHTML = '<span class="dock-note">比赛已结束</span>';
+      return;
+    }
+    if (!me) {
+      wrap.innerHTML = '';
+      return;
+    }
+    if (state.pending) {
+      wrap.innerHTML = `<span class="dock-note">${state.pending.playerId === app.meId ? '请完成弹窗操作' : `等待 ${escapeHtml(pendingPlayer?.name || '玩家')}`}</span>`;
+      return;
+    }
+    if (!current || current.id !== app.meId) {
+      wrap.innerHTML = `<span class="dock-note">等待 ${escapeHtml(current?.name || '玩家')}</span>`;
+      return;
+    }
+
+    if (state.phase === 'awaitRoll') {
+      wrap.innerHTML = `<button class="dock-btn primary" data-action="roll" type="button">掷骰子</button>`;
+      return;
+    }
+
+    if (state.phase === 'action') {
+      const canBlade = !state.bladeUsed && hasBladeTarget(me);
+      wrap.innerHTML = `
+        <button class="dock-btn primary" data-action="end" type="button">结束回合</button>
+        <button class="dock-btn" data-action="borrow" type="button">借债</button>
+        <button class="dock-btn" data-action="sell" type="button" ${me.trophies.length ? '' : 'disabled'}>卖房</button>
+        <button class="dock-btn" data-action="blade" type="button" ${canBlade ? '' : 'disabled'}>拼刺刀</button>
+      `;
+      return;
+    }
+
+    if (state.phase === 'rolling') {
+      wrap.innerHTML = '<span class="dock-note">掷骰中…</span>';
+      return;
+    }
+    if (state.phase === 'skipped') {
+      wrap.innerHTML = '<span class="dock-note">本回合暂停</span>';
+      return;
+    }
+    wrap.innerHTML = '<span class="dock-note">结算中…</span>';
+  }
+
+  function hasBladeTarget(me) {
+    return app.state.players.some(
+      (player) => player.id !== me.id && !player.eliminated && player.pos === me.pos
+    );
+  }
+
+  function renderFeed(state) {
+    const feed = $('eventFeed');
+    const logs = state.logs.slice(-5).reverse();
+    const key = logs.map((log) => log.id).join(',');
+    if (key === app.feedRendered) return;
+    app.feedRendered = key;
+    feed.innerHTML = logs.map((log) => `
+      <div class="feed-line ${escapeHtml(log.tone || 'info')}">${escapeHtml(log.text)}</div>
+    `).join('');
+  }
+
+  function updateEffectBanner(state) {
+    const effect = state.lastEffect;
+    if (!effect?.id) return;
+    if (effect.id === app.seenEffectId) return;
+    app.seenEffectId = effect.id;
+    const banner = $('effectBanner');
+    banner.innerHTML = `<strong>${escapeHtml(effect.title)}</strong> · ${escapeHtml(effect.text)}`;
+    banner.classList.add('show');
+    clearTimeout(app.bannerTimer);
+    app.bannerTimer = setTimeout(() => banner.classList.remove('show'), 3400);
+  }
+
+  function renderPending() {
+    const state = app.state;
+    const pending = state.pending;
+    const backdrop = $('pendingBackdrop');
+    if (!pending || pending.playerId !== app.meId) {
+      backdrop.classList.add('hidden');
+      app.pendingId = null;
+      app.pendingSubmitting = false;
+      return;
+    }
+    if (app.pendingId === pending.id) return;
+    app.pendingId = pending.id;
+    app.pendingSubmitting = false;
+
+    const image = pending.image
+      ? `<img class="pending-image" src="${escapeHtml(pending.image)}" alt="${escapeHtml(pending.title)}">`
+      : '';
+    const options = (pending.options || []).map((option, index) => {
+      const tone = option.tone === 'primary' ? ' primary' : option.tone === 'danger' ? ' danger' : '';
+      const playerInfo = option.avatar
+        ? `<span class="option-player"><img src="${escapeHtml(option.avatar)}" alt=""><span>${escapeHtml(option.label)}<small>${escapeHtml(option.sub || '')}</small></span></span>`
+        : `<span>${escapeHtml(option.label)}</span>`;
+      return `<button type="button" class="option-btn${tone}" data-pending-value="${escapeHtml(option.value)}" ${index === 0 ? 'autofocus' : ''}>${playerInfo}</button>`;
+    }).join('');
+
+    $('pendingCard').innerHTML = `
+      <div class="pending-kicker">SWTT · 待处理</div>
+      <div class="pending-title">${escapeHtml(pending.title)}</div>
+      <div class="pending-message">${escapeHtml(pending.message || '')}</div>
+      ${image}
+      <div class="pending-options${pending.options?.length === 2 ? ' stack' : ''}" id="pendingOptions">${options}</div>
+    `;
+    $('pendingOptions').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-pending-value]');
+      if (!button || app.pendingSubmitting) return;
+      app.pendingSubmitting = true;
+      $('pendingOptions').querySelectorAll('button').forEach((item) => { item.disabled = true; });
+      app.socket.emit('pending:respond', { id: pending.id, value: button.dataset.pendingValue });
+      setTimeout(() => { app.pendingSubmitting = false; }, 1200);
+    });
+    backdrop.classList.remove('hidden');
+  }
+
+  function renderEnd(state) {
+    const overlay = $('endOverlay');
+    if (state.status !== 'ended') {
+      overlay.classList.add('hidden');
+      return;
+    }
+    overlay.classList.remove('hidden');
+    const winners = state.winnerIds
+      .map((id) => state.players.find((player) => player.id === id)?.name)
+      .filter(Boolean);
+    if (winners.length > 1) {
+      $('endTitle').textContent = `${winners.join('、')} 并列世一`;
+    } else if (winners.length === 1) {
+      $('endTitle').textContent = `${winners[0]} 获得世一头衔`;
+    } else {
+      $('endTitle').textContent = '比赛结束';
+    }
+    $('rankList').innerHTML = (state.rankings || []).map((row) => `
+      <div class="rank-row${row.rank === 1 ? ' first' : ''}">
+        <div class="rank-no">${row.rank}</div>
+        <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
+        <div class="rank-name">${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}</div>
+        <div class="rank-score">${formatPoints(row.points)}</div>
+      </div>
+    `).join('');
+  }
+
+  function handleControlAction(event) {
+    const button = event.target.closest('[data-action]');
+    if (!button || button.disabled) return;
+    const action = button.dataset.action;
+    if (action === 'roll') {
+      app.socket.emit('game:roll');
+    } else if (action === 'end') {
+      app.socket.emit('game:endTurn');
+    } else if (action === 'borrow') {
+      openBorrowModal();
+    } else if (action === 'sell') {
+      openSellModal();
+    } else if (action === 'blade') {
+      openBladeModal();
+    }
+  }
+
+  function handlePanelClick(event) {
+    const button = event.target.closest('[data-item-uid]');
+    if (!button) return;
+    if (button.dataset.playerId !== app.meId) {
+      showToast('只能使用自己的道具', 'error');
+      return;
+    }
+    if (app.state.phase !== 'action' || app.state.pending || app.state.turnPlayerId !== app.meId) {
+      showToast('只能在自己掷骰后的行动阶段使用道具', 'error');
+      return;
+    }
+    app.socket.emit('game:item', { uid: button.dataset.itemUid });
+  }
+
+  function startGame() {
+    if (!app.state || app.state.status !== 'waiting') return;
+    app.socket.emit('game:start');
+  }
+
+  function openRules() {
+    openModal(`
+      <div class="modal-title">规则手册</div>
+      <div class="rules-scroll">
+        <img src="/assets/rules/rule1.jpg" alt="规则手册 1">
+        <img src="/assets/rules/rule2.jpg" alt="规则手册 2">
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">关闭</button>
+      </div>
+    `, { locked: false });
+  }
+
+  function openModal(html, options = {}) {
+    $('modalCard').innerHTML = html;
+    $('modalBackdrop').classList.remove('hidden');
+    app.modalLocked = Boolean(options.locked);
+    $('modalCard').querySelectorAll('[data-close-modal]').forEach((button) => {
+      button.addEventListener('click', closeModal);
+    });
+  }
+
+  function closeModal() {
+    $('modalBackdrop').classList.add('hidden');
+    $('modalCard').innerHTML = '';
+    app.modalLocked = false;
+  }
+
+  function confirmDialog(title, message, confirmLabel, onConfirm) {
+    openModal(`
+      <div class="modal-title">${escapeHtml(title)}</div>
+      <div class="modal-message">${escapeHtml(message)}</div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">取消</button>
+        <button class="primary-btn" id="confirmActionBtn" type="button">${escapeHtml(confirmLabel)}</button>
+      </div>
+    `);
+    $('confirmActionBtn').addEventListener('click', () => {
+      closeModal();
+      onConfirm();
+    });
+  }
+
+  function confirmLeave() {
+    if (!app.state) {
+      clearToLanding();
+      return;
+    }
+    confirmDialog(
+      '离开房间',
+      app.state.status === 'playing' ? '离开后本局视为退出比赛。' : '确定要离开房间吗？',
+      '离开',
+      leaveRoom
+    );
+  }
+
+  function leaveRoom() {
+    if (!app.state) {
+      clearToLanding();
+      return;
+    }
+    app.socket.emit('room:leave');
+    setTimeout(() => {
+      forgetSession();
+      clearToLanding();
+    }, 350);
+  }
+
+  function confirmFinish() {
+    if (!app.state || app.state.status !== 'playing') return;
+    confirmDialog(
+      '结束并结算',
+      '按当前积分结算，积分最高者获得世一头衔。',
+      '结算',
+      () => app.socket.emit('game:finish')
+    );
+  }
+
+  function openBorrowModal() {
+    const state = app.state;
+    const me = state.players.find((player) => player.id === app.meId);
+    const lenders = state.players.filter((player) => player.id !== app.meId && !player.eliminated);
+    if (!lenders.length) {
+      showToast('没有可借款的玩家', 'error');
+      return;
+    }
+    openModal(`
+      <div class="modal-title">借债</div>
+      <div class="modal-message">与债主自由商定金额、利息和期限，到期强制归还。</div>
+      <div class="form-grid">
+        <div class="form-field full">
+          <label for="loanLender">债主</label>
+          <select id="loanLender">
+            ${lenders.map((player) => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name)} · ${formatPoints(player.points)} 积分</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field">
+          <label for="loanAmount">借款积分</label>
+          <input id="loanAmount" type="number" min="100" max="5000" step="50" value="500">
+        </div>
+        <div class="form-field">
+          <label for="loanInterest">利息 %</label>
+          <input id="loanInterest" type="number" min="0" max="100" step="1" value="10">
+        </div>
+        <div class="form-field">
+          <label for="loanTerm">期限（回合）</label>
+          <input id="loanTerm" type="number" min="1" max="5" step="1" value="2">
+        </div>
+        <div class="form-field">
+          <label>你的积分</label>
+          <input value="${formatPoints(me.points)}" disabled>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">取消</button>
+        <button class="primary-btn" id="submitLoanBtn" type="button">发送请求</button>
+      </div>
+    `);
+    $('submitLoanBtn').addEventListener('click', () => {
+      const lenderId = $('loanLender').value;
+      const amount = Number($('loanAmount').value);
+      const interest = Number($('loanInterest').value);
+      const term = Number($('loanTerm').value);
+      if (!Number.isFinite(amount) || amount < 100 || amount > 5000) {
+        showToast('借款积分需在 100-5000 之间', 'error');
+        return;
+      }
+      if (!Number.isFinite(interest) || interest < 0 || interest > 100) {
+        showToast('利息需在 0-100% 之间', 'error');
+        return;
+      }
+      if (!Number.isFinite(term) || term < 1 || term > 5) {
+        showToast('期限需在 1-5 回合之间', 'error');
+        return;
+      }
+      closeModal();
+      app.socket.emit('game:borrow', { lenderId, amount, interest, term });
+    });
+  }
+
+  function openSellModal() {
+    const me = app.state.players.find((player) => player.id === app.meId);
+    if (!me) return;
+    if (!me.trophies.length) {
+      showToast('你还没有可以卖出的奖杯', 'error');
+      return;
+    }
+    openModal(`
+      <div class="modal-title">卖房</div>
+      <div class="modal-message">SWTT 以标注积分的 50% 回收奖杯，每次回收 1 个。</div>
+      <div class="trophy-sell-list">
+        ${me.trophies.map((trophy) => {
+          const count = Math.max(1, trophy.streak || 1);
+          return `
+            <div class="sell-row">
+              <div>
+                <strong>${escapeHtml(trophy.name)}</strong><br>
+                <span>${trophy.points} 积分 · 持有 ${count}/3 个</span>
+              </div>
+              <button type="button" data-sell-tile="${trophy.tileId}">回收 1 个 +${Math.floor(trophy.points / 2)}</button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">关闭</button>
+      </div>
+    `);
+    $('modalCard').querySelectorAll('[data-sell-tile]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const tileId = Number(button.dataset.sellTile);
+        closeModal();
+        app.socket.emit('game:sell', { tileId });
+      });
+    });
+  }
+
+  function openBladeModal() {
+    const state = app.state;
+    const me = state.players.find((player) => player.id === app.meId);
+    const targets = state.players.filter(
+      (player) => player.id !== app.meId && !player.eliminated && player.pos === me.pos
+    );
+    if (!targets.length) {
+      showToast('同一格没有其他玩家', 'error');
+      return;
+    }
+    openModal(`
+      <div class="modal-title">拼刺刀</div>
+      <div class="modal-message">双方各掷一次骰子，点数小者支付点数大者 300 积分。需要对方同意。</div>
+      <div class="pending-options" id="bladeTargets">
+        ${targets.map((player) => `
+          <button type="button" class="option-btn" data-blade-target="${escapeHtml(player.id)}">
+            <span class="option-player">
+              <img src="${escapeHtml(player.avatar)}" alt="">
+              <span>${escapeHtml(player.name)}<small>${player.points} 积分</small></span>
+            </span>
+          </button>
+        `).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">取消</button>
+      </div>
+    `);
+    $('bladeTargets').addEventListener('click', (event) => {
+      const button = event.target.closest('[data-blade-target]');
+      if (!button) return;
+      const targetId = button.dataset.bladeTarget;
+      closeModal();
+      app.socket.emit('game:blade', { targetId });
+    });
+  }
+
+  init();
+})();

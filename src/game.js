@@ -176,6 +176,7 @@ class Room {
       divineUsed: false,
       divineValue: null,
       lastLandedTileId: null,
+      turnStartTrophyTiles: [],
       arrivalId: 0,
       lastJinNaiArrivalId: 0,
     };
@@ -207,6 +208,8 @@ class Room {
       fate: shuffle(CARDS.fate.map((c) => c.key)),
       item: shuffle(CARDS.item.map((c) => c.key)),
     };
+    const first = this.players[this.turnIndex];
+    if (first) first.turnStartTrophyTiles = first.trophies.map((t) => t.tileId);
     this.log('比赛开始，每位选手初始 2000 积分', 'system');
     this.broadcast();
   }
@@ -519,6 +522,7 @@ class Room {
       this.lastDice = null;
       this.bladeUsed = false;
       candidate.turnsTaken += 1;
+      candidate.turnStartTrophyTiles = candidate.trophies.map((t) => t.tileId);
       this.broadcast();
       return;
     }
@@ -982,7 +986,11 @@ class Room {
         await this.offerPurchase(player, tile);
       } else if (owner.id === player.id) {
         const trophy = owner.trophies.find((t) => t.tileId === tile.id);
-        if (this.current?.id === player.id && this.hasItem(player, 'qingshen')) {
+        if (
+          this.current?.id === player.id &&
+          this.hasItem(player, 'qingshen') &&
+          (player.turnStartTrophyTiles || []).includes(tile.id)
+        ) {
           const useQingshen = await this.ask(player.id, {
             type: 'choice',
             title: '请神',
@@ -1926,6 +1934,11 @@ class Room {
           this.phase = 'action';
           this.broadcast();
           throw new GameError('你未持有所处赛事地的奖杯');
+        }
+        if (!(player.turnStartTrophyTiles || []).includes(tile.id)) {
+          this.phase = 'action';
+          this.broadcast();
+          throw new GameError('请神只能用于到达前已持有奖杯的地界');
         }
         consume();
         player.points += tile.points;

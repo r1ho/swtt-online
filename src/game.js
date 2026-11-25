@@ -1029,24 +1029,45 @@ class Room {
     if (!amount || player.eliminated || this.status !== 'playing') return 0;
     let payer = player;
 
-    // 布鲁龟的羁绊：支付其他玩家时，除最高位外由雨果龟代付
+    // 布鲁龟的羁绊：支付其他玩家时，最高一位由布鲁龟支付，其余零头由雨果龟支付。
+    // 例如 1500 = 布鲁龟 1000 + 雨果龟 500。
     if (
+      !options._split &&
       payer.charKey === 'bulugui' &&
       options.recipient &&
-      options.recipient.id !== payer.id &&
-      options.recipient.charKey !== 'yuguogui'
+      options.recipient.id !== payer.id
     ) {
       const hugo = this.players.find(
         (p) => p.charKey === 'yuguogui' && !p.eliminated
       );
-      const topWorth = Math.max(...this.alivePlayers.map((p) => this.netWorth(p)));
-      if (hugo && this.netWorth(options.recipient) < topWorth) {
-        this.log(
-          `雨果龟替布鲁龟支付 ${amount} 积分给 ${options.recipient.name}`,
-          'info',
-          hugo.id
-        );
-        payer = hugo;
+      if (hugo) {
+        const scale = 10 ** Math.floor(Math.log10(amount));
+        const highPart = Math.floor(amount / scale) * scale;
+        const remainder = amount - highPart;
+        if (remainder > 0) {
+          this.log(
+            `布鲁龟支付 ${highPart}，雨果龟代付零头 ${remainder}，合计 ${amount}`,
+            'info',
+            payer.id
+          );
+          const paidHigh = await this.charge(payer, highPart, {
+            ...options,
+            _split: true,
+          });
+          let paidRest = 0;
+          if (this.status === 'playing') {
+            if (options.recipient.id === hugo.id) {
+              // 收款人就是雨果龟时，零头等于自己付给自己，不再重复结算。
+              this.log('雨果龟承担零头，但收款人是自己，不重复扣款', 'info', hugo.id);
+            } else {
+              paidRest = await this.charge(hugo, remainder, {
+                ...options,
+                _split: true,
+              });
+            }
+          }
+          return paidHigh + paidRest;
+        }
       }
     }
 
@@ -1327,18 +1348,17 @@ class Room {
           this.effectLog(p, '积分失效', '没有持有奖杯，无事发生', 'info');
         } else {
           const closest = [...p.trophies].sort((a, b) => {
-            const da = circularDistance(p.pos, a.tileId);
-            const db = circularDistance(p.pos, b.tileId);
-            if (da !== db) return da - db;
-            return a.points - b.points;
+            const da = (p.pos - a.tileId + BOARD_SIZE) % BOARD_SIZE;
+            const db = (p.pos - b.tileId + BOARD_SIZE) % BOARD_SIZE;
+            return da - db;
           })[0];
           const index = p.trophies.findIndex((t) => t.tileId === closest.tileId);
-          const lostCount = Math.max(1, closest.streak || 1);
-          if (index >= 0) p.trophies.splice(index, 1);
+          closest.streak = Math.max(0, (closest.streak || 1) - 1);
+          if (closest.streak <= 0 && index >= 0) p.trophies.splice(index, 1);
           this.effectLog(
             p,
             '积分失效',
-            `失去离你最近的 ${closest.name}，共 ${lostCount} 个奖杯`,
+            `失去逆时针最近的 ${closest.name} 的 1 个奖杯${closest.streak > 0 ? `（剩 ${closest.streak}/3）` : ''}`,
             'loss'
           );
         }

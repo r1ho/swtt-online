@@ -176,6 +176,8 @@ class Room {
       divineUsed: false,
       divineValue: null,
       lastLandedTileId: null,
+      arrivalId: 0,
+      lastJinNaiArrivalId: 0,
     };
   }
 
@@ -416,6 +418,7 @@ class Room {
       player.pos = (player.pos + 1) % BOARD_SIZE;
       path.push(player.pos);
     }
+    player.arrivalId = this.nextSeq();
     this.lastMove = {
       seq: this.nextSeq(),
       playerId,
@@ -439,6 +442,10 @@ class Room {
     this.broadcast();
     await sleep(250);
 
+    if (this.status === 'playing' && !player.eliminated && player.pos === 9) {
+      await this.applyJinNai(player);
+    }
+
     if (this.status === 'playing' && !player.eliminated) {
       await this.resolveLanding(player, 0);
     }
@@ -454,6 +461,11 @@ class Room {
   }
 
   async applyJinNai(player) {
+    if (!player.arrivalId) player.arrivalId = this.nextSeq();
+    if (player.lastJinNaiArrivalId && player.lastJinNaiArrivalId === player.arrivalId) {
+      return;
+    }
+    player.lastJinNaiArrivalId = player.arrivalId;
     player.jinNaiPasses += 1;
     const nth = player.jinNaiPasses;
     if (nth > 2) return;
@@ -822,6 +834,9 @@ class Room {
       this.effectLog(player, '训练场', '到达训练场，积分 +1000', 'gain');
       this.broadcast();
     }
+    if (tile.special === 'jinNai') {
+      await this.applyJinNai(player);
+    }
   }
 
   async offerPurchase(player, tile) {
@@ -886,12 +901,6 @@ class Room {
     if (character?.homeTile === tile.id && tile.kind === 'tournament') {
       player.points += 250;
       this.effectLog(player, '主场优势', `到达${tile.short}，积分 +250`, 'gain');
-    }
-
-    // 金奈：只在到达时计算第一次/第二次
-    if (tile.special === 'jinNai') {
-      await this.applyJinNai(player);
-      if (this.status !== 'playing' || player.eliminated) return;
     }
 
     // 持续效果：米其林（仅具体赛事地，特殊格子不加分）
@@ -1102,6 +1111,7 @@ class Room {
           );
           const oldPos = tun.pos;
           tun.pos = zhi.pos;
+          tun.arrivalId = this.nextSeq();
           this.lastMove = {
             seq: this.nextSeq(),
             playerId: tun.id,
@@ -1111,6 +1121,7 @@ class Room {
           };
           this.broadcast();
           await sleep(360);
+          await this.resolveArrivalSpecial(tun);
           await this.resolveLanding(tun, depth + 1);
         }
         this.broadcast();
@@ -1625,6 +1636,7 @@ class Room {
       player.pos = (player.pos + 1) % BOARD_SIZE;
       path.push(player.pos);
     }
+    player.arrivalId = this.nextSeq();
     this.lastMove = {
       seq: this.nextSeq(),
       playerId: player.id,
@@ -1641,6 +1653,9 @@ class Room {
         this.effectLog(player, '训练场', '经过训练场，积分 +1000', 'gain');
       }
       if (player.eliminated || this.status !== 'playing') return;
+    }
+    if (this.status === 'playing' && !player.eliminated && player.pos === 9) {
+      await this.applyJinNai(player);
     }
     if (this.status === 'playing' && !player.eliminated) {
       await this.resolveLanding(player, depth);
@@ -1705,6 +1720,8 @@ class Room {
         const ownPos = player.pos;
         player.pos = target.pos;
         target.pos = ownPos;
+        player.arrivalId = this.nextSeq();
+        target.arrivalId = this.nextSeq();
         this.lastMove = {
           seq: this.nextSeq(),
           playerId: player.id,

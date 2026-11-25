@@ -442,6 +442,10 @@ class Room {
     this.broadcast();
     await sleep(250);
 
+    if (this.status === 'playing' && !player.eliminated) {
+      this.applyBondBonuses(player);
+    }
+
     if (this.status === 'playing' && !player.eliminated && player.pos === 9) {
       await this.applyJinNai(player);
     }
@@ -720,12 +724,14 @@ class Room {
           label: trophy.name,
           sub: `回收 +${this.trophySaleValue(trophy)}`,
         }));
+        sellOptions.push({ value: 'back', label: '退出选择', sub: '不卖出，返回借积分/卖出奖杯选项' });
         const tileId = await this.ask(player.id, {
           type: 'sellChoice',
           title: '选择卖出奖杯',
-          message: '请选择要卖给 SWTT 的奖杯，回收价为账面价值的一半。',
+          message: '请选择要卖给 SWTT 的奖杯，回收价为账面价值的一半。如不想卖出，可退出选择。',
           options: sellOptions,
         });
+        if (tileId === 'back') continue;
         const trophy = player.trophies.find((t) => t.tileId === Number(tileId));
         if (trophy) {
           this.sellTrophyInternal(player, trophy, false);
@@ -895,6 +901,9 @@ class Room {
     const character = CHARACTER_BY_KEY[player.charKey];
     player.lastLandedTileId = tile.id;
 
+    // 人物羁绊的加分先于本格任何扣分结算
+    this.applyBondBonuses(player);
+
     // 角色主场优势
     if (character?.homeTile === tile.id && tile.kind === 'tournament') {
       player.points += 250;
@@ -1027,6 +1036,36 @@ class Room {
     this.broadcast();
   }
 
+  applyBondBonuses(mover) {
+    if (this.status !== 'playing' || mover.eliminated) return;
+    const pairs = [
+      ['yunshuimu', 'zhangbenzhiyao'],
+      ['aolikeyou', 'feilikeyou'],
+      ['yuguogui', 'bulugui'],
+    ];
+    for (const [aKey, bKey] of pairs) {
+      if (mover.charKey !== aKey && mover.charKey !== bKey) continue;
+      const a = this.players.find((p) => p.charKey === aKey && !p.eliminated);
+      const b = this.players.find((p) => p.charKey === bKey && !p.eliminated);
+      const key = [aKey, bKey].sort().join('|');
+      if (!a || !b || a.pos !== b.pos) {
+        this.activeBonds.delete(key);
+        continue;
+      }
+      if (this.activeBonds.has(key)) continue;
+      this.activeBonds.add(key);
+      a.points += 200;
+      b.points += 200;
+      this.effectLog(
+        mover,
+        '人物羁绊',
+        `${a.name} 与 ${b.name} 同格，双方积分 +200`,
+        'gain'
+      );
+      this.broadcast();
+    }
+  }
+
   async resolveCharacterBonds(mover, depth = 0) {
     if (this.status !== 'playing' || mover.eliminated || depth > 4) return;
     const pairs = [
@@ -1120,6 +1159,9 @@ class Room {
           };
           this.broadcast();
           await sleep(360);
+          if (this.status === 'playing' && !tun.eliminated) {
+            this.applyBondBonuses(tun);
+          }
           await this.resolveArrivalSpecial(tun);
           await this.resolveLanding(tun, depth + 1);
         }
@@ -1665,6 +1707,9 @@ class Room {
       }
       if (player.eliminated || this.status !== 'playing') return;
     }
+    if (this.status === 'playing' && !player.eliminated) {
+      this.applyBondBonuses(player);
+    }
     if (this.status === 'playing' && !player.eliminated && player.pos === 9) {
       await this.applyJinNai(player);
     }
@@ -1753,9 +1798,13 @@ class Room {
           swapWith: player.id,
         };
         this.broadcast();
+        if (this.status === 'playing' && !player.eliminated) {
+          this.applyBondBonuses(player);
+        }
         await this.resolveArrivalSpecial(player);
         await this.resolveLanding(player, 1);
         if (this.status === 'playing' && !target.eliminated) {
+          this.applyBondBonuses(target);
           await this.resolveArrivalSpecial(target);
           await this.resolveLanding(target, 1);
         }

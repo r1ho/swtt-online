@@ -997,7 +997,7 @@
           <div class="loan-form-actions">
             <span>当前积分：${formatPoints(me?.points ?? 0)}</span>
             <div class="loan-form-buttons">
-              <button class="loan-cancel" id="pendingLoanCancel" type="button">返回</button>
+              <button class="loan-cancel" id="pendingLoanCancel" type="button">退出选择</button>
               <button class="option-btn primary" type="submit">确认借款</button>
             </div>
           </div>

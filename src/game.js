@@ -982,7 +982,7 @@ class Room {
         await this.offerPurchase(player, tile);
       } else if (owner.id === player.id) {
         const trophy = owner.trophies.find((t) => t.tileId === tile.id);
-        if (this.hasItem(player, 'qingshen')) {
+        if (this.current?.id === player.id && this.hasItem(player, 'qingshen')) {
           const useQingshen = await this.ask(player.id, {
             type: 'choice',
             title: '请神',
@@ -1333,7 +1333,11 @@ class Room {
       }
     }
 
-    if (options.allowDunwu !== false && this.hasItem(payer, 'dunwu')) {
+    if (
+      options.allowDunwu !== false &&
+      this.current?.id === payer.id &&
+      this.hasItem(payer, 'dunwu')
+    ) {
       const answer = await this.ask(payer.id, {
         type: 'choice',
         title: '顿悟',
@@ -1356,6 +1360,7 @@ class Room {
     if (
       options.allowFanshen !== false &&
       options.owner &&
+      this.current?.id === payer.id &&
       this.hasItem(payer, 'fanshen')
     ) {
       const answer = await this.ask(payer.id, {
@@ -1392,6 +1397,7 @@ class Room {
     if (
       options.owner &&
       options.allowBlame !== false &&
+      this.current?.id === payer.id &&
       !payer.effects.blame &&
       this.hasItem(payer, 'jiahuo') &&
       blameCandidates.length > 0
@@ -1407,9 +1413,8 @@ class Room {
         ],
       });
       if (useBlame === 'yes') {
-        this.removeItemByKey(payer, 'jiahuo');
         payer.effects.blame = true;
-        this.effectLog(payer, '嫁祸', '下一次支付时，可指定一人代付', 'info');
+        this.effectLog(payer, '嫁祸', '选择一名玩家代付本次积分', 'info');
         this.broadcast();
       }
       if (payer.eliminated || this.status !== 'playing') return 0;
@@ -1443,6 +1448,7 @@ class Room {
         if (targetId && targetId !== 'self') {
           const target = this.playerById(targetId);
           if (target && !target.eliminated) {
+            if (this.hasItem(payer, 'jiahuo')) this.removeItemByKey(payer, 'jiahuo');
             payer.effects.blame = false;
             this.effectLog(payer, '嫁祸', `指定 ${target.name} 代付 ${amount} 积分`, 'info');
             this.broadcast();
@@ -1455,7 +1461,7 @@ class Room {
           }
         }
         payer.effects.blame = false;
-        this.log(`${payer.name} 选择自己支付，嫁祸已用完`, 'info', payer.id);
+        this.log(`${payer.name} 选择自己支付，嫁祸卡牌保留`, 'info', payer.id);
       } else {
         payer.effects.blame = false;
         this.log(`${payer.name} 没有可嫁祸的对象，嫁祸已用完`, 'info', payer.id);
@@ -1839,8 +1845,7 @@ class Room {
     try {
       if (item.key === 'jiahuo') {
         player.effects.blame = true;
-        consume();
-        this.effectLog(player, '嫁祸', '下一次支付时，可指定一人代付', 'info');
+        this.effectLog(player, '嫁祸', '下一次支付时，可指定一人代付（卡牌暂留）', 'info');
       } else if (item.key === 'jipiao') {
         const target = await this.chooseOtherPlayer(
           player,

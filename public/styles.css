@@ -620,7 +620,7 @@ button:disabled {
 .board-map {
   position: absolute;
   inset: 0;
-  transform: scale(1.04);
+  transform: scale(1.03);
   transform-origin: center;
 }
 

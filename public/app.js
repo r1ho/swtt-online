@@ -1074,18 +1074,25 @@
       return;
     }
     overlay.classList.remove('hidden');
-    const winners = state.winnerIds
-      .map((id) => state.players.find((player) => player.id === id)?.name)
-      .filter(Boolean);
-    if (winners.length > 1) {
-      $('endTitle').textContent = `${winners.join('、')} 并列积分榜第一`;
-    } else if (winners.length === 1) {
-      $('endTitle').textContent = `${winners[0]} 积分榜第一`;
+    const pointsRows = state.pointsRankings || state.rankings || [];
+    const trophyRows = state.trophyRankings || [];
+    const pointLeader = pointsRows[0];
+    const trophyLeader = trophyRows[0];
+    const pointNames = pointLeader
+      ? pointsRows.filter((row) => row.points === pointLeader.points).map((row) => row.name)
+      : [];
+    const trophyNames = trophyLeader
+      ? trophyRows.filter((row) => (row.trophies || 0) === (trophyLeader.trophies || 0)).map((row) => row.name)
+      : [];
+    if (pointLeader || trophyLeader) {
+      const parts = [];
+      if (pointNames.length) parts.push(`积分榜第一：${pointNames.join('、')}`);
+      if (trophyNames.length) parts.push(`奖牌榜第一：${trophyNames.join('、')}`);
+      $('endTitle').textContent = parts.join(' · ');
     } else {
       $('endTitle').textContent = '比赛结束';
     }
 
-    const pointsRows = state.pointsRankings || state.rankings || [];
     $('pointsRankList').innerHTML = pointsRows.map((row) => `
       <div class="rank-row${row.rank === 1 ? ' first' : ''}" title="现有积分 ${formatPoints(row.points)}">
         <div class="rank-no">${row.rank}</div>
@@ -1100,7 +1107,6 @@
       </div>
     `).join('');
 
-    const trophyRows = state.trophyRankings || [];
     $('trophyRankList').innerHTML = trophyRows.map((row) => {
       const names = (row.trophyNames || [])
         .map((trophy) => `${escapeHtml(trophy.name)}${trophy.count > 1 ? ` ×${trophy.count}` : ''}`)

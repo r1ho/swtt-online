@@ -773,8 +773,8 @@
   function ownerPosition(tile) {
     let x = tile.x;
     let y = tile.y;
-    if (tile.id >= 1 && tile.id <= 10) y -= 11.5;
-    else if (tile.id >= 19 && tile.id <= 28) y += 7.5;
+    if (tile.id >= 1 && tile.id <= 10) y -= 6.7;
+    else if (tile.id >= 19 && tile.id <= 28) y += 5;
     return { x, y };
   }
 

@@ -897,7 +897,7 @@
 
   function renderFeed(state) {
     const feed = $('eventFeed');
-    const logs = state.logs.slice(-5).reverse();
+    const logs = state.logs.slice(-2).reverse();
     const key = logs.map((log) => log.id).join(',');
     if (key === app.feedRendered) return;
     app.feedRendered = key;

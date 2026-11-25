@@ -791,16 +791,21 @@ button:disabled {
 }
 
 .board-hud .event-feed {
+  display: flex;
+  flex-direction: column;
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
   margin-top: 5px;
-  min-height: 16px;
-  max-height: 36px;
   padding: 0 2px;
   overflow: hidden;
 }
 
 .board-hud .feed-line {
-  font-size: 10px;
-  line-height: 1.55;
+  flex: 0 0 15px;
+  height: 15px;
+  font-size: 11px;
+  line-height: 15px;
 }
 
 /* ============ 控制台（旧样式保留兼容） ============ */
@@ -1932,7 +1937,17 @@ button:disabled {
     white-space: normal;
   }
   .board-hud .event-feed {
-    display: none;
+    display: flex;
+    height: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    margin-top: 4px;
+  }
+  .board-hud .feed-line {
+    flex: 0 0 14px;
+    height: 14px;
+    font-size: 10px;
+    line-height: 14px;
   }
   .dock-btn { flex: 1 1 auto; text-align: center; padding: 8px 10px; }
   .turn-copy strong { font-size: 12px; }

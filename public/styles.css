@@ -8,8 +8,8 @@
   --cream-2: #d9e8ff;
   --gold: #6db6ff;
   --gold-deep: #2b6fb5;
-  --coral: #ff8ea3;
-  --coral-deep: #c65a74;
+  --coral: #9ed8ff;
+  --coral-deep: #5b8dcc;
   --mint: #9ed8ff;
   --mint-deep: #3f8dd0;
   --sky: #b9e4ff;
@@ -134,8 +134,8 @@ button:disabled {
 }
 
 .ghost-btn.danger {
-  color: #ffc3ba;
-  border-color: rgba(255, 123, 110, 0.42);
+  color: #d7ecff;
+  border-color: rgba(109, 182, 255, 0.42);
 }
 
 .copy-btn {
@@ -533,7 +533,7 @@ button:disabled {
   top: 10px;
   right: 12px;
   font-size: 9px;
-  color: #ffb4a9;
+  color: #d7ecff;
   letter-spacing: 0.08em;
 }
 
@@ -979,7 +979,7 @@ button:disabled {
 }
 
 .feed-line.gain { color: #b9e2ff; }
-.feed-line.loss, .feed-line.danger { color: #ffb5a8; }
+.feed-line.loss, .feed-line.danger { color: #d7ecff; }
 .feed-line.win { color: var(--gold); }
 .feed-line.card { color: #b4dcff; }
 
@@ -1085,7 +1085,7 @@ button:disabled {
 }
 
 .pp-points strong.low {
-  color: #ff9c8d;
+  color: #9ed8ff;
 }
 
 .pp-points span {
@@ -1119,9 +1119,9 @@ button:disabled {
 }
 
 .pp-badge.red {
-  background: rgba(255, 123, 110, 0.12);
-  border-color: rgba(255, 123, 110, 0.35);
-  color: #ffb3a8;
+  background: rgba(109, 182, 255, 0.12);
+  border-color: rgba(109, 182, 255, 0.35);
+  color: #d7ecff;
 }
 
 .pp-badge.ability-btn,
@@ -1285,7 +1285,7 @@ button:disabled {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #ff8e7f;
+  background: #8fc4ff;
   box-shadow: 0 0 0 2px rgba(5, 18, 36, 0.8);
 }
 
@@ -1787,9 +1787,9 @@ button:disabled {
 }
 
 .option-btn.danger {
-  background: rgba(255, 123, 110, 0.14);
-  border-color: rgba(255, 123, 110, 0.42);
-  color: #ffb5a8;
+  background: rgba(109, 182, 255, 0.14);
+  border-color: rgba(109, 182, 255, 0.42);
+  color: #d7ecff;
 }
 
 .option-player {
@@ -1923,8 +1923,8 @@ button:disabled {
 }
 
 .toast.error {
-  border-color: rgba(255, 123, 110, 0.6);
-  color: #ffc1b7;
+  border-color: rgba(109, 182, 255, 0.6);
+  color: #d7ecff;
 }
 
 @keyframes toastIn {

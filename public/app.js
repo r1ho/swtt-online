@@ -127,8 +127,6 @@
     app.selectedChar = app.config.characters[0]?.key || null;
     renderCharPicker();
     bindStaticEvents();
-    placeHud();
-    window.addEventListener('resize', placeHud);
     setupSocket();
     app.initialized = true;
 
@@ -240,23 +238,6 @@
       const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
       if (fsElement) exitFullscreen();
     });
-  }
-
-  function placeHud() {
-    const hud = $('boardHud');
-    const board = $('board');
-    const table = document.querySelector('.table-column');
-    if (!hud || !board || !table) return;
-    const mobile = window.matchMedia('(max-width: 760px)').matches;
-    if (mobile) {
-      if (!hud.classList.contains('hud-outside')) {
-        hud.classList.add('hud-outside');
-        table.appendChild(hud);
-      }
-    } else if (hud.classList.contains('hud-outside')) {
-      hud.classList.remove('hud-outside');
-      board.appendChild(hud);
-    }
   }
 
   function setupSocket() {

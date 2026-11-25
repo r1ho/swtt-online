@@ -584,6 +584,7 @@ button:disabled {
   min-width: 0;
   width: 100%;
   max-width: 1080px;
+  max-width: min(1080px, calc((100dvh - 170px) * 1.4));
   margin: 0 auto;
 }
 
@@ -603,7 +604,7 @@ button:disabled {
   overflow: hidden;
   background: #0a4a4e;
   isolation: isolate;
-  --token-size: clamp(19px, 2.2vw, 30px);
+  --token-size: clamp(21px, 2.3vw, 32px);
 }
 
 .board-art {
@@ -802,6 +803,45 @@ button:disabled {
 .board-hud .feed-line {
   font-size: 10px;
   line-height: 1.55;
+}
+
+/* 手机端：操作区移到地图下方 */
+.board-hud.hud-outside {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+}
+
+.board-hud.hud-outside .board-hud-main {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.board-hud.hud-outside .control-actions {
+  grid-column: 1 / -1;
+  justify-content: stretch;
+  gap: 6px;
+}
+
+.board-hud.hud-outside .dock-btn {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.board-hud.hud-outside .event-feed {
+  display: flex;
+  max-height: 36px;
+  margin-top: 6px;
+}
+
+.board-hud.hud-outside .feed-line {
+  font-size: 10px;
 }
 
 /* ============ 控制台（旧样式保留兼容） ============ */
@@ -1764,7 +1804,7 @@ button:disabled {
 
   .table-column {
     order: 1;
-    max-width: 100%;
+    max-width: min(100%, calc((100dvh - 170px) * 1.4));
   }
 
   .side-stack {

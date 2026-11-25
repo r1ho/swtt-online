@@ -127,6 +127,8 @@
     app.selectedChar = app.config.characters[0]?.key || null;
     renderCharPicker();
     bindStaticEvents();
+    placeHud();
+    window.addEventListener('resize', placeHud);
     setupSocket();
     app.initialized = true;
 
@@ -238,6 +240,23 @@
       const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
       if (fsElement) exitFullscreen();
     });
+  }
+
+  function placeHud() {
+    const hud = $('boardHud');
+    const board = $('board');
+    const table = document.querySelector('.table-column');
+    if (!hud || !board || !table) return;
+    const mobile = window.matchMedia('(max-width: 760px)').matches;
+    if (mobile) {
+      if (!hud.classList.contains('hud-outside')) {
+        hud.classList.add('hud-outside');
+        table.appendChild(hud);
+      }
+    } else if (hud.classList.contains('hud-outside')) {
+      hud.classList.remove('hud-outside');
+      board.appendChild(hud);
+    }
   }
 
   function setupSocket() {
@@ -783,13 +802,13 @@
 
   function tokenOffsets(count) {
     if (count <= 1) return [{ x: 0, y: 0 }];
-    if (count === 2) return [{ x: -1.35, y: -0.6 }, { x: 1.35, y: 0.6 }];
-    if (count === 3) return [{ x: -1.8, y: 0.6 }, { x: 0, y: -1.1 }, { x: 1.8, y: 0.6 }];
-    if (count === 4) return [{ x: -1.35, y: -1.1 }, { x: 1.35, y: -1.1 }, { x: -1.35, y: 1.1 }, { x: 1.35, y: 1.1 }];
+    if (count === 2) return [{ x: -1.8, y: -0.8 }, { x: 1.8, y: 0.8 }];
+    if (count === 3) return [{ x: -2.1, y: 0.8 }, { x: 0, y: -1.3 }, { x: 2.1, y: 0.8 }];
+    if (count === 4) return [{ x: -1.8, y: -1.3 }, { x: 1.8, y: -1.3 }, { x: -1.8, y: 1.3 }, { x: 1.8, y: 1.3 }];
     const grid = [
-      { x: -2, y: -1.3 }, { x: 0, y: -1.3 }, { x: 2, y: -1.3 },
-      { x: -2, y: 1.3 }, { x: 0, y: 1.3 }, { x: 2, y: 1.3 },
-      { x: -1, y: 2.2 }, { x: 1, y: 2.2 },
+      { x: -2.2, y: -1.5 }, { x: 0, y: -1.5 }, { x: 2.2, y: -1.5 },
+      { x: -2.2, y: 1.5 }, { x: 0, y: 1.5 }, { x: 2.2, y: 1.5 },
+      { x: -1.1, y: 2.5 }, { x: 1.1, y: 2.5 },
     ];
     return grid.slice(0, count);
   }

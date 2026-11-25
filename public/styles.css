@@ -489,6 +489,7 @@ button:disabled {
 .seat.filled {
   background: linear-gradient(180deg, rgba(12, 58, 63, 0.84), rgba(6, 38, 43, 0.84));
   border-color: rgba(255, 247, 227, 0.22);
+  cursor: pointer;
 }
 
 .seat.offline {
@@ -564,11 +565,12 @@ button:disabled {
   flex: 1;
   width: min(1780px, 100%);
   margin: 0 auto;
-  padding: 12px 22px 22px;
+  padding: 16px 18px 20px;
   display: grid;
-  grid-template-columns: minmax(190px, 228px) minmax(0, 1fr) minmax(190px, 228px);
-  gap: 16px;
+  grid-template-columns: minmax(180px, 205px) minmax(0, 1fr) minmax(180px, 205px);
+  gap: 14px;
   align-items: start;
+  align-content: center;
 }
 
 .side-stack {
@@ -737,7 +739,72 @@ button:disabled {
   z-index: 4;
 }
 
-/* ============ 控制台 ============ */
+/* ============ 棋盘中央控制台 ============ */
+.board-hud {
+  position: absolute;
+  left: 50%;
+  top: 55.5%;
+  transform: translateX(-50%);
+  width: min(72%, 720px);
+  z-index: 14;
+  padding: 8px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 247, 227, 0.28);
+  background: linear-gradient(180deg, rgba(7, 44, 49, 0.93), rgba(4, 29, 34, 0.95));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(9px);
+}
+
+.board-hud-main {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.board-hud .turn-info {
+  min-width: 112px;
+}
+
+.board-hud .turn-avatar {
+  width: 38px;
+  height: 38px;
+}
+
+.board-hud .dice-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+
+.board-hud .dice-face {
+  font-size: 22px;
+}
+
+.board-hud .control-actions {
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.board-hud .dock-btn {
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.board-hud .event-feed {
+  margin-top: 5px;
+  min-height: 15px;
+  max-height: 34px;
+  padding: 0 2px;
+  overflow: hidden;
+}
+
+.board-hud .feed-line {
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+/* ============ 控制台（旧样式保留兼容） ============ */
 .control-dock {
   margin-top: 11px;
   display: grid;
@@ -1046,6 +1113,21 @@ button:disabled {
   color: #ffb3a8;
 }
 
+.pp-badge.ability-btn,
+.pp-badge.card-badge {
+  font-family: inherit;
+  cursor: pointer;
+  color: #d9fff2;
+  background: rgba(126, 230, 200, 0.12);
+  border-color: rgba(126, 230, 200, 0.4);
+  padding: 2px 6px;
+}
+
+.pp-badge.ability-btn:hover,
+.pp-badge.card-badge:hover {
+  background: rgba(126, 230, 200, 0.24);
+}
+
 .pp-section {
   margin-top: 6px;
   display: flex;
@@ -1295,9 +1377,60 @@ button:disabled {
 }
 
 .rank-score {
-  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  line-height: 1.15;
+}
+
+.rank-score strong {
+  font-size: 15px;
   font-weight: 1000;
   color: var(--mint);
+}
+
+.rank-score small {
+  font-size: 8px;
+  color: rgba(255, 247, 227, 0.48);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.character-card-image {
+  width: 100%;
+  display: block;
+  margin-top: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(24, 59, 58, 0.16);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.16);
+}
+
+.character-ability-list {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: #40504a;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.character-ability-list li {
+  margin: 3px 0;
+}
+
+.divine-options {
+  margin-top: 14px;
+}
+
+.divine-options .option-btn {
+  flex: 1 1 64px;
+  min-height: 44px;
+  text-align: center;
+  justify-content: center;
+  color: #2c240d;
+  background: linear-gradient(180deg, #ffd977, var(--gold));
+  border-color: #ffedb4;
+  font-weight: 900;
 }
 
 /* ============ 弹窗 ============ */
@@ -1626,6 +1759,7 @@ button:disabled {
     flex-direction: column;
     gap: 10px;
     padding: 10px 12px 18px;
+    align-content: flex-start;
   }
 
   .table-column {
@@ -1689,6 +1823,57 @@ button:disabled {
   .control-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+  }
+  .board-hud {
+    top: 53.5%;
+    width: 93%;
+    padding: 6px 8px;
+    border-radius: 13px;
+  }
+  .board-hud-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px;
+  }
+  .board-hud .turn-info {
+    min-width: 0;
+    gap: 5px;
+  }
+  .board-hud .turn-avatar {
+    width: 28px;
+    height: 28px;
+  }
+  .board-hud .turn-copy strong {
+    font-size: 10px;
+  }
+  .board-hud .turn-copy span {
+    font-size: 8px;
+  }
+  .board-hud .dice-box {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    box-shadow: 0 3px 0 #a8874b;
+  }
+  .board-hud .dice-face {
+    font-size: 16px;
+  }
+  .board-hud .control-actions {
+    grid-column: 1 / -1;
+    gap: 4px;
+    justify-content: stretch;
+  }
+  .board-hud .dock-btn {
+    flex: 1 1 auto;
+    padding: 5px 6px;
+    font-size: 9px;
+    text-align: center;
+  }
+  .board-hud .dock-note {
+    font-size: 9px;
+    white-space: normal;
+  }
+  .board-hud .event-feed {
+    display: none;
   }
   .dock-btn { flex: 1 1 auto; text-align: center; padding: 8px 10px; }
   .turn-copy strong { font-size: 12px; }

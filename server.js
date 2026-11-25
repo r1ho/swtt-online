@@ -318,6 +318,15 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('game:divine', (payload) => {
+    try {
+      const { room, player } = getSocketRoom(socket);
+      room.useDivine(player.id, payload?.value);
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
   socket.on('game:finish', () => {
     try {
       const { room, player } = getSocketRoom(socket);

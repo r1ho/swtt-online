@@ -16,7 +16,10 @@
         <span class="brand-dot"></span>
         <span>SWTT</span>
       </div>
-      <button class="ghost-btn" id="landingRulesBtn" type="button">规则手册</button>
+      <div class="topbar-actions">
+        <button class="ghost-btn fullscreen-btn" type="button">全屏</button>
+        <button class="ghost-btn" id="landingRulesBtn" type="button">规则手册</button>
+      </div>
     </div>
 
     <main class="landing-main">
@@ -48,6 +51,7 @@
         <span>谁在水积分</span>
       </div>
       <div class="topbar-actions">
+        <button class="ghost-btn fullscreen-btn" type="button">全屏</button>
         <button class="ghost-btn" id="lobbyRulesBtn" type="button">规则手册</button>
         <button class="ghost-btn danger" id="lobbyLeaveBtn" type="button">退出</button>
       </div>
@@ -76,6 +80,7 @@
       <div class="topbar-actions">
         <span class="room-pill">房间 <strong id="gameCode">----</strong></span>
         <button class="ghost-btn hidden" id="finishBtn" type="button">结算</button>
+        <button class="ghost-btn fullscreen-btn" type="button">全屏</button>
         <button class="ghost-btn" id="gameRulesBtn" type="button">规则手册</button>
         <button class="ghost-btn danger" id="gameLeaveBtn" type="button">退出</button>
       </div>
@@ -91,24 +96,24 @@
             <div class="board-tokens" id="boardTokens"></div>
             <div class="effect-banner" id="effectBanner"></div>
             <div class="turn-flag" id="turnFlag"></div>
-          </div>
-        </div>
-
-        <div class="control-dock">
-          <div class="turn-info">
-            <div class="turn-avatar" id="turnAvatar"></div>
-            <div class="turn-copy">
-              <strong id="turnName">等待开始</strong>
-              <span id="turnHint">—</span>
+            <div class="board-hud" id="boardHud">
+              <div class="board-hud-main">
+                <div class="turn-info">
+                  <div class="turn-avatar" id="turnAvatar"></div>
+                  <div class="turn-copy">
+                    <strong id="turnName">等待开始</strong>
+                    <span id="turnHint">—</span>
+                  </div>
+                </div>
+                <div class="dice-box" id="diceBox" aria-label="骰子">
+                  <span class="dice-face" id="diceFace">?</span>
+                </div>
+                <div class="control-actions" id="controlActions"></div>
+              </div>
+              <div class="event-feed" id="eventFeed"></div>
             </div>
           </div>
-          <div class="dice-box" id="diceBox" aria-label="骰子">
-            <span class="dice-face" id="diceFace">?</span>
-          </div>
-          <div class="control-actions" id="controlActions"></div>
         </div>
-
-        <div class="event-feed" id="eventFeed"></div>
       </section>
 
       <aside class="side-stack right" id="rightStack"></aside>
@@ -117,7 +122,7 @@
     <div class="waiting-pill hidden" id="waitingPill"></div>
     <div class="end-overlay hidden" id="endOverlay">
       <div class="end-card">
-        <p class="end-kicker">SWTT · 世一头衔</p>
+        <p class="end-kicker">SWTT · 综合结算</p>
         <h2 id="endTitle">比赛结束</h2>
         <div class="rank-list" id="rankList"></div>
         <button class="primary-btn" id="endLeaveBtn" type="button">离开房间</button>

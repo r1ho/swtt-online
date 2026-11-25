@@ -13,6 +13,8 @@ const {
 } = require('./config');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const CHARACTER_BY_KEY = Object.fromEntries(CHARACTERS.map((c) => [c.key, c]));
+const TILE_BY_ID = Object.fromEntries(TILES.map((t) => [t.id, t]));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const now = () => Date.now();
 
@@ -66,6 +68,7 @@ class Room {
     this.loans = [];
     this.decks = { chance: [], fate: [], item: [] };
     this.bladeUsed = false;
+    this.activeBonds = new Set();
     this.seq = 0;
     this.log(`${host.name} 创建了房间`, 'system');
   }
@@ -104,6 +107,21 @@ class Room {
 
   get alivePlayers() {
     return this.players.filter((p) => !p.eliminated);
+  }
+
+  netWorth(player) {
+    const trophyValue = player.trophies.reduce((sum, trophy) => {
+      const tile = TILE_BY_ID[trophy.tileId];
+      return sum + (tile ? tile.points * (trophy.streak || 1) : 0);
+    }, 0);
+    return player.points + trophyValue;
+  }
+
+  trophyValue(player) {
+    return player.trophies.reduce((sum, trophy) => {
+      const tile = TILE_BY_ID[trophy.tileId];
+      return sum + (tile ? tile.points * (trophy.streak || 1) : 0);
+    }, 0);
   }
 
   playerById(id) {
@@ -155,6 +173,8 @@ class Room {
       joinedAt: now(),
       jinNaiPasses: 0,
       turnsTaken: 0,
+      divineUsed: false,
+      divineValue: null,
     };
   }
 
@@ -178,6 +198,7 @@ class Room {
     this.status = 'playing';
     this.phase = 'awaitRoll';
     this.round = 1;
+    this.activeBonds.clear();
     this.decks = {
       chance: shuffle(CARDS.chance.map((c) => c.key)),
       fate: shuffle(CARDS.fate.map((c) => c.key)),
@@ -198,6 +219,11 @@ class Room {
       gender: player.gender,
       country: player.country,
       language: player.language,
+      cardImage: character?.cardImage || null,
+      homeTile: character?.homeTile ?? null,
+      ability: character?.ability || [],
+      divineUsed: Boolean(player.divineUsed),
+      divineValue: player.divineValue ?? null,
       pos: player.pos,
       points: player.points,
       trophies: player.trophies.map((t) => ({ ...t })),
@@ -319,6 +345,52 @@ class Room {
     if (this.current.eliminated) throw new GameError('你已退出比赛');
   }
 
+  rollDie(player, purpose, options = {}) {
+    let value;
+    let divine = false;
+    if (
+      player.charKey === 'tunlusi' &&
+      Number.isInteger(player.divineValue) &&
+      player.divineValue >= 1 &&
+      player.divineValue <= 6
+    ) {
+      value = player.divineValue;
+      player.divineValue = null;
+      divine = true;
+      this.log(`${player.name} 发动「神的旨意」，指定点数 ${value}`, 'roll', player.id);
+    } else {
+      value = randomInt(1, 6);
+    }
+
+    if (
+      options.movement &&
+      (player.charKey === 'aolikeyou' || player.charKey === 'feilikeyou')
+    ) {
+      let guard = 0;
+      while (value === 1 && guard < 20) {
+        guard += 1;
+        this.log(`${player.name} 急脾气：掷出 1，重新投掷`, 'roll', player.id);
+        value = randomInt(1, 6);
+      }
+    }
+
+    if (player.charKey === 'yunshuimu' && player.points <= 2500 && !player.eliminated) {
+      const gain = value * 10;
+      player.points += gain;
+      this.effectLog(player, '蛰伏', `掷出 ${value}，积分 +${gain}`, 'gain');
+    }
+
+    this.lastDice = {
+      seq: this.nextSeq(),
+      playerId: player.id,
+      value,
+      purpose,
+      byName: player.name,
+      divine,
+    };
+    return value;
+  }
+
   async roll(playerId) {
     this.ensureTurn(playerId);
     if (this.phase !== 'awaitRoll') throw new GameError('现在不能掷骰子');
@@ -327,14 +399,7 @@ class Room {
     this.bladeUsed = false;
     this.broadcast();
 
-    const value = randomInt(1, 6);
-    this.lastDice = {
-      seq: this.nextSeq(),
-      playerId,
-      value,
-      purpose: '移动',
-      byName: player.name,
-    };
+    const value = this.rollDie(player, '移动', { movement: true });
     this.log(`${player.name} 掷出了 ${value} 点`, 'roll', playerId);
     this.broadcast();
     await sleep(420);
@@ -365,18 +430,7 @@ class Room {
         this.effectLog(player, '训练场', '经过训练场，积分 +1000', 'gain');
       }
       if (tile.special === 'jinNai') {
-        player.jinNaiPasses += 1;
-        if (player.jinNaiPasses === 1) {
-          await this.charge(player, 100, {
-            reason: '第一次经过金奈',
-            allowFanshen: false,
-          });
-        } else if (player.jinNaiPasses === 2) {
-          await this.charge(player, 50, {
-            reason: '第二次经过金奈',
-            allowFanshen: false,
-          });
-        }
+        await this.applyJinNai(player);
       }
     }
     this.broadcast();
@@ -393,6 +447,22 @@ class Room {
         this.phase = 'action';
         this.broadcast();
       }
+    }
+  }
+
+  async applyJinNai(player) {
+    player.jinNaiPasses += 1;
+    const nth = player.jinNaiPasses;
+    if (nth > 2) return;
+    const amount = nth === 1 ? 100 : 50;
+    const paid = await this.charge(player, amount, {
+      reason: nth === 1 ? '第一次路过金奈' : '第二次路过金奈',
+      allowFanshen: false,
+    });
+    if (paid > 0) {
+      this.effectLog(player, '金奈', `第 ${nth} 次路过，积分 -${amount}`, 'loss');
+    } else {
+      this.effectLog(player, '金奈', `第 ${nth} 次路过，惩罚已免除`, 'info');
     }
   }
 
@@ -486,25 +556,31 @@ class Room {
 
   forceSellToReach(player, target) {
     while (player.points < target && player.trophies.length > 0) {
-      const trophy = [...player.trophies].sort((a, b) => b.points - a.points)[0];
+      const trophy = [...player.trophies].sort(
+        (a, b) => this.trophySaleValue(b) - this.trophySaleValue(a)
+      )[0];
       this.sellTrophyInternal(player, trophy, true);
     }
+  }
+
+  trophySaleValue(trophy) {
+    const tile = TILE_BY_ID[trophy.tileId];
+    if (!tile) return 0;
+    return Math.floor((tile.points * (trophy.streak || 1)) / 2);
   }
 
   sellTrophyInternal(player, trophy, forced = false) {
     const index = player.trophies.findIndex((t) => t.tileId === trophy.tileId);
     if (index < 0) return 0;
-    const tile = TILES[trophy.tileId];
-    const price = Math.floor(tile.points * 0.5);
-    trophy.streak = Math.max(0, (trophy.streak || 1) - 1);
-    if (trophy.streak <= 0) {
-      player.trophies.splice(index, 1);
-    }
+    const tile = TILE_BY_ID[trophy.tileId];
+    const count = Math.max(1, trophy.streak || 1);
+    const price = Math.floor((tile.points * count) / 2);
+    player.trophies.splice(index, 1);
     player.points += price;
     this.effectLog(
       player,
       forced ? '强制回收奖杯' : '卖房',
-      `${tile.name} 回收 1 个奖杯，获得 ${price} 积分${trophy.streak > 0 ? `（剩 ${trophy.streak}/3）` : ''}`,
+      `${tile.name} 的 ${count} 个奖杯一起回收，获得 ${price} 积分`,
       'info'
     );
     return price;
@@ -513,7 +589,9 @@ class Room {
   normalizeFinances(player) {
     if (!player || player.eliminated) return;
     while (player.points <= 0 && player.trophies.length > 0) {
-      const trophy = [...player.trophies].sort((a, b) => b.points - a.points)[0];
+      const trophy = [...player.trophies].sort(
+        (a, b) => this.trophySaleValue(b) - this.trophySaleValue(a)
+      )[0];
       this.sellTrophyInternal(player, trophy, true);
     }
     if (player.points <= 0) {
@@ -529,6 +607,8 @@ class Room {
     player.effects = { pingshu: false, michelin: false, blame: false };
     player.items = [];
     player.trophies = [];
+    player.divineValue = null;
+    this.activeBonds.clear();
     this.log(`${player.name} 积分≤0，退出世排`, 'danger', player.id);
     for (const loan of this.loans) {
       if (loan.status === 'active' && (loan.borrowerId === player.id || loan.lenderId === player.id)) {
@@ -550,6 +630,8 @@ class Room {
     return [...this.players]
       .sort((a, b) => {
         if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
+        const netDiff = this.netWorth(b) - this.netWorth(a);
+        if (netDiff !== 0) return netDiff;
         if (b.points !== a.points) return b.points - a.points;
         return units(b) - units(a);
       })
@@ -559,6 +641,8 @@ class Room {
         name: p.name,
         avatar: p.avatar,
         points: p.points,
+        trophyValue: this.trophyValue(p),
+        netWorth: this.netWorth(p),
         trophies: units(p),
         eliminated: p.eliminated,
       }));
@@ -585,13 +669,13 @@ class Room {
     if (playerId !== this.hostId) throw new GameError('只有房主可以结算');
     if (this.status !== 'playing') throw new GameError('游戏未在进行中');
     const ranked = this.rankings();
-    const top = ranked.length ? ranked[0].points : 0;
-    const winners = ranked.filter((r) => r.points === top).map((r) => r.id);
+    const top = ranked.length ? ranked[0].netWorth : 0;
+    const winners = ranked.filter((r) => r.netWorth === top).map((r) => r.id);
     this.lastEffect = {
       id: makeId(6),
       playerId: null,
       title: '比赛结算',
-      text: '积分最高者获得世一头衔',
+      text: '按“持有积分 + 奖杯账面积分”综合排名',
       tone: 'win',
       at: now(),
     };
@@ -607,12 +691,7 @@ class Room {
       this.broadcast();
     }
     if (tile.special === 'jinNai') {
-      player.jinNaiPasses += 1;
-      if (player.jinNaiPasses === 1) {
-        await this.charge(player, 100, { reason: '第一次到达金奈', allowFanshen: false });
-      } else if (player.jinNaiPasses === 2) {
-        await this.charge(player, 50, { reason: '第二次到达金奈', allowFanshen: false });
-      }
+      await this.applyJinNai(player);
     }
   }
 
@@ -623,13 +702,20 @@ class Room {
       return;
     }
     const tile = TILES[player.pos];
+    const character = CHARACTER_BY_KEY[player.charKey];
 
-    // 持续效果：米其林
+    // 角色主场优势
+    if (character?.homeTile === tile.id && tile.kind === 'tournament') {
+      player.points += 250;
+      this.effectLog(player, '主场优势', `到达${tile.short}，积分 +250`, 'gain');
+    }
+
+    // 持续效果：米其林（仅具体赛事地，特殊格子不加分）
     if (player.effects.michelin) {
       if (tile.special === 'jinNai') {
         player.effects.michelin = false;
         this.effectLog(player, '米其林', '到达金奈后拉肚子，此卡不再生效', 'loss');
-      } else {
+      } else if (tile.kind === 'tournament') {
         player.points += 20;
         this.effectLog(player, '米其林', `到达${tile.short}，积分 +20`, 'gain');
       }
@@ -646,6 +732,15 @@ class Room {
         player.points += gain;
         this.effectLog(player, '乒超', `掷出 ${value}，积分 +${gain}`, 'gain');
       }
+      this.broadcast();
+    }
+
+    // 成都混团世界杯 / 伦敦世乒赛团体：到达后重新掷骰，点数×100
+    if (tile.special === 'diceBonus') {
+      const value = await this.rollEffect(player, tile.short);
+      const gain = value * 100;
+      player.points += gain;
+      this.effectLog(player, '掷骰加分', `${tile.short} 掷出 ${value}，积分 +${gain}`, 'gain');
       this.broadcast();
     }
 
@@ -714,9 +809,18 @@ class Room {
         }
       } else {
         const aliveCount = Math.max(1, this.alivePlayers.length);
-        const rent = Math.max(1, Math.round(tile.points / aliveCount));
+        const trophy = owner.trophies.find((t) => t.tileId === tile.id);
+        const trophyCount = Math.max(1, trophy?.streak || 1);
+        let rent = Math.max(1, Math.round((tile.points * trophyCount) / aliveCount));
+        const halfRent =
+          (player.charKey === 'zhangbenzhiyao' && owner.charKey === 'zhangbenmeiyao') ||
+          (player.charKey === 'zhangbenmeiyao' && owner.charKey === 'zhangbenzhiyao');
+        if (halfRent) {
+          rent = Math.max(1, Math.round(rent / 2));
+          this.effectLog(player, '人物羁绊', `到达${owner.name}的地产，只支付一半过路费`, 'info');
+        }
         this.log(
-          `${player.name} 到达 ${owner.name} 的 ${tile.name}，需支付 ${rent} 积分`,
+          `${player.name} 到达 ${owner.name} 的 ${tile.name}（${trophyCount}/3），需支付 ${rent} 积分`,
           'info',
           player.id
         );
@@ -739,8 +843,12 @@ class Room {
     } else if (tile.kind === 'fate') {
       await this.drawCard(player, 'fate', depth);
     } else if (tile.kind === 'barber') {
-      player.skipTurns += 1;
-      this.effectLog(player, '理发店', '下一回合暂停一次', 'info');
+      if (player.charKey === 'yunshuimu') {
+        this.effectLog(player, '理发店', '丑发型：免除暂停惩罚', 'gain');
+      } else {
+        player.skipTurns += 1;
+        this.effectLog(player, '理发店', '下一回合暂停一次', 'info');
+      }
     } else if (tile.kind === 'gym') {
       player.points += 500;
       this.effectLog(player, '健身房', '到达健身房，积分 +500', 'gain');
@@ -748,18 +856,114 @@ class Room {
       await this.drawItem(player);
     }
 
+    if (this.status === 'playing' && !player.eliminated) {
+      await this.resolveCharacterBonds(player, depth);
+    }
     this.broadcast();
   }
 
+  async resolveCharacterBonds(mover, depth = 0) {
+    if (this.status !== 'playing' || mover.eliminated || depth > 4) return;
+    const pairs = [
+      ['yunshuimu', 'zhangbenzhiyao', 'both200'],
+      ['yunshuimu', 'zhangbenmeiyao', 'pay200'],
+      ['yunshuimu', 'tunlusi', 'moveTun'],
+      ['aolikeyou', 'feilikeyou', 'both200'],
+      ['yuguogui', 'bulugui', 'both200'],
+    ];
+
+    for (const [aKey, bKey, kind] of pairs) {
+      if (mover.charKey !== aKey && mover.charKey !== bKey) continue;
+      const a = this.players.find((p) => p.charKey === aKey && !p.eliminated);
+      const b = this.players.find((p) => p.charKey === bKey && !p.eliminated);
+      const key = [aKey, bKey].sort().join('|');
+      if (!a || !b || a.pos !== b.pos) {
+        this.activeBonds.delete(key);
+        continue;
+      }
+      if (this.activeBonds.has(key)) continue;
+      this.activeBonds.add(key);
+
+      if (kind === 'both200') {
+        a.points += 200;
+        b.points += 200;
+        this.effectLog(
+          mover,
+          '人物羁绊',
+          `${a.name} 与 ${b.name} 同格，双方积分 +200`,
+          'gain'
+        );
+        this.broadcast();
+        continue;
+      }
+
+      if (kind === 'pay200') {
+        const yun = a.charKey === 'yunshuimu' ? a : b;
+        const mei = a.charKey === 'zhangbenmeiyao' ? a : b;
+        await this.charge(yun, 200, {
+          reason: '与张本美鳐同格',
+          recipient: mei,
+          allowFanshen: false,
+        });
+        this.effectLog(
+          yun,
+          '人物羁绊',
+          `${yun.name} 与 ${mei.name} 同格，支付 ${mei.name} 200 积分`,
+          'loss'
+        );
+        this.broadcast();
+        if (this.status !== 'playing' || mover.eliminated) return;
+        continue;
+      }
+
+      if (kind === 'moveTun') {
+        const yun = a.charKey === 'yunshuimu' ? a : b;
+        const tun = a.charKey === 'tunlusi' ? a : b;
+        const zhi = this.players.find(
+          (p) => p.charKey === 'zhangbenzhiyao' && !p.eliminated
+        );
+        if (!zhi) {
+          this.log(`${yun.name} 与 ${tun.name} 同格，但张本智鳐不在场上`, 'info', yun.id);
+          continue;
+        }
+        const answer = await this.ask(yun.id, {
+          type: 'choice',
+          title: '人物羁绊 · 云水母',
+          message: `你和豚鲁斯处于同一格，是否让豚鲁斯移动到张本智鳐所在位置？`,
+          image: null,
+          options: [
+            { value: 'yes', label: '让豚鲁斯移动', tone: 'primary' },
+            { value: 'no', label: '不移动' },
+          ],
+        });
+        if (this.status !== 'playing' || yun.eliminated) return;
+        if (answer === 'yes') {
+          this.log(
+            `${yun.name} 发动羁绊，令 ${tun.name} 移动到张本智鳐所在位置`,
+            'info',
+            yun.id
+          );
+          const oldPos = tun.pos;
+          tun.pos = zhi.pos;
+          this.lastMove = {
+            seq: this.nextSeq(),
+            playerId: tun.id,
+            from: oldPos,
+            to: tun.pos,
+            path: [tun.pos],
+          };
+          this.broadcast();
+          await sleep(360);
+          await this.resolveLanding(tun, depth + 1);
+        }
+        this.broadcast();
+      }
+    }
+  }
+
   async rollEffect(player, purpose) {
-    const value = randomInt(1, 6);
-    this.lastDice = {
-      seq: this.nextSeq(),
-      playerId: player.id,
-      value,
-      purpose,
-      byName: player.name,
-    };
+    const value = this.rollDie(player, purpose);
+    this.log(`${player.name} 为「${purpose}」重新掷骰：${value} 点`, 'roll', player.id);
     this.broadcast();
     await sleep(460);
     return value;
@@ -824,7 +1028,27 @@ class Room {
     amount = Math.max(0, Math.round(amount));
     if (!amount || player.eliminated || this.status !== 'playing') return 0;
     let payer = player;
-    let cancelled = false;
+
+    // 布鲁龟的羁绊：支付其他玩家时，除最高位外由雨果龟代付
+    if (
+      payer.charKey === 'bulugui' &&
+      options.recipient &&
+      options.recipient.id !== payer.id &&
+      options.recipient.charKey !== 'yuguogui'
+    ) {
+      const hugo = this.players.find(
+        (p) => p.charKey === 'yuguogui' && !p.eliminated
+      );
+      const topWorth = Math.max(...this.alivePlayers.map((p) => this.netWorth(p)));
+      if (hugo && this.netWorth(options.recipient) < topWorth) {
+        this.log(
+          `雨果龟替布鲁龟支付 ${amount} 积分给 ${options.recipient.name}`,
+          'info',
+          hugo.id
+        );
+        payer = hugo;
+      }
+    }
 
     if (options.allowDunwu !== false && this.hasItem(payer, 'dunwu')) {
       const answer = await this.ask(payer.id, {
@@ -1109,12 +1333,12 @@ class Room {
             return a.points - b.points;
           })[0];
           const index = p.trophies.findIndex((t) => t.tileId === closest.tileId);
-          closest.streak = Math.max(0, (closest.streak || 1) - 1);
-          if (closest.streak <= 0 && index >= 0) p.trophies.splice(index, 1);
+          const lostCount = Math.max(1, closest.streak || 1);
+          if (index >= 0) p.trophies.splice(index, 1);
           this.effectLog(
             p,
             '积分失效',
-            `失去离你最近的 ${closest.name} 的 1 个奖杯${closest.streak > 0 ? `（剩 ${closest.streak}/3）` : ''}`,
+            `失去离你最近的 ${closest.name}，共 ${lostCount} 个奖杯`,
             'loss'
           );
         }
@@ -1233,18 +1457,36 @@ class Room {
         this.effectLog(player, '训练场', '经过训练场，积分 +1000', 'gain');
       }
       if (tile.special === 'jinNai') {
-        player.jinNaiPasses += 1;
-        if (player.jinNaiPasses === 1) {
-          await this.charge(player, 100, { reason: '第一次经过金奈', allowFanshen: false });
-        } else if (player.jinNaiPasses === 2) {
-          await this.charge(player, 50, { reason: '第二次经过金奈', allowFanshen: false });
-        }
+        await this.applyJinNai(player);
       }
       if (player.eliminated || this.status !== 'playing') return;
     }
     if (this.status === 'playing' && !player.eliminated) {
       await this.resolveLanding(player, depth);
     }
+  }
+
+  useDivine(playerId, value) {
+    if (this.status !== 'playing') throw new GameError('游戏未在进行中');
+    if (this.pending) throw new GameError('请先完成当前操作');
+    if (['rolling', 'resolving', 'ending', 'ended'].includes(this.phase)) {
+      throw new GameError('当前不能发动神的旨意');
+    }
+    const player = this.playerById(playerId);
+    if (!player || player.eliminated) throw new GameError('你已退出比赛');
+    if (player.charKey !== 'tunlusi') throw new GameError('只有豚鲁斯可以发动神的旨意');
+    if (player.divineUsed) throw new GameError('神的旨意整局只能使用一次');
+    const v = Math.round(Number(value));
+    if (!Number.isFinite(v) || v < 1 || v > 6) throw new GameError('请选择 1-6 点');
+    player.divineUsed = true;
+    player.divineValue = v;
+    this.effectLog(
+      player,
+      '神的旨意',
+      `指定本人下一次骰子点数为 ${v}`,
+      'gain'
+    );
+    this.broadcast();
   }
 
   async useItem(playerId, uid, payload = {}) {
@@ -1510,6 +1752,8 @@ class Room {
       player.effects = { pingshu: false, michelin: false, blame: false };
       player.items = [];
       player.trophies = [];
+      player.divineValue = null;
+      this.activeBonds.clear();
       if (this.hostId === playerId) this.transferHost();
       if (hadPending) this.cancelPending();
       this.checkGameEnd();

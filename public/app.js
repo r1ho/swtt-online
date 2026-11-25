@@ -145,7 +145,7 @@
       return `
         <button type="button" class="char-choice${selected ? ' selected' : ''}${taken ? ' taken' : ''}"
                 data-char="${escapeHtml(char.key)}" ${taken ? 'disabled' : ''}
-                title="${escapeHtml(char.name)}">
+                title="${escapeHtml(`${char.name}：${(char.ability || []).join('；')}`)}">
           <img src="${escapeHtml(char.avatar)}" alt="${escapeHtml(char.name)}" draggable="false">
           <span>${escapeHtml(char.name)}</span>
         </button>
@@ -197,6 +197,11 @@
     $('landingRulesBtn').addEventListener('click', openRules);
     $('lobbyRulesBtn').addEventListener('click', openRules);
     $('gameRulesBtn').addEventListener('click', openRules);
+    document.querySelectorAll('.fullscreen-btn').forEach((button) => {
+      button.addEventListener('click', toggleFullscreen);
+    });
+    document.addEventListener('fullscreenchange', updateFullscreenButtons);
+    document.addEventListener('webkitfullscreenchange', updateFullscreenButtons);
     $('copyCodeBtn').addEventListener('click', () => copyText(app.state?.code || ''));
     $('lobbyLeaveBtn').addEventListener('click', () => confirmLeave());
     $('gameLeaveBtn').addEventListener('click', () => confirmLeave());
@@ -207,6 +212,10 @@
     $('controlActions').addEventListener('click', handleControlAction);
     $('leftStack').addEventListener('click', handlePanelClick);
     $('rightStack').addEventListener('click', handlePanelClick);
+    $('lobbySeats').addEventListener('click', (event) => {
+      const holder = event.target.closest('[data-card-key]');
+      if (holder) openCharacterCard(holder.dataset.cardKey);
+    });
     $('boardTokens').addEventListener('click', (event) => {
       const token = event.target.closest('[data-player-id]');
       if (!token) return;
@@ -221,7 +230,13 @@
       if (event.target === $('modalBackdrop') && !app.modalLocked) closeModal();
     });
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && !app.modalLocked) closeModal();
+      if (event.key !== 'Escape') return;
+      if (!$('modalBackdrop').classList.contains('hidden')) {
+        if (!app.modalLocked) closeModal();
+        return;
+      }
+      const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+      if (fsElement) exitFullscreen();
     });
   }
 
@@ -450,7 +465,7 @@
       const player = state.players[i];
       if (player) {
         slots.push(`
-          <div class="seat filled ${player.online ? '' : 'offline'}">
+          <div class="seat filled ${player.online ? '' : 'offline'}" data-card-key="${escapeHtml(player.charKey)}" title="查看角色卡">
             ${player.online ? '' : '<span class="seat-offline">离线</span>'}
             <img src="${escapeHtml(player.avatar)}" alt="${escapeHtml(player.name)}" draggable="false">
             <span class="seat-name">${escapeHtml(player.name)}</span>
@@ -551,6 +566,17 @@
     if (player.isHost) badges.push('<span class="pp-badge">房主</span>');
     if (player.skipTurns > 0) badges.push(`<span class="pp-badge red">暂停×${player.skipTurns}</span>`);
     if (player.eliminated) badges.push('<span class="pp-badge red">已退出</span>');
+    if (player.charKey === 'yunshuimu' && player.points <= 2500 && !player.eliminated) {
+      badges.push('<span class="pp-badge">蛰伏中</span>');
+    }
+    if (player.charKey === 'tunlusi' && !player.eliminated) {
+      if (player.divineValue) {
+        badges.push(`<span class="pp-badge">神谕 ${player.divineValue}</span>`);
+      } else if (!player.divineUsed && isMe) {
+        badges.push('<button class="pp-badge ability-btn" type="button" data-divine>神谕</button>');
+      }
+    }
+    badges.push(`<button class="pp-badge card-badge" type="button" data-card-key="${escapeHtml(player.charKey)}" title="${escapeHtml((player.ability || []).join('；'))}">角色卡</button>`);
 
     const trophies = player.trophies.length
       ? player.trophies.map((trophy) => {
@@ -830,17 +856,24 @@
     }
 
     if (state.phase === 'awaitRoll') {
-      wrap.innerHTML = `<button class="dock-btn primary" data-action="roll" type="button">掷骰子</button>`;
+      const divine = me.charKey === 'tunlusi' && !me.divineUsed
+        ? '<button class="dock-btn" data-action="divine" type="button">神谕</button>'
+        : '';
+      wrap.innerHTML = `<button class="dock-btn primary" data-action="roll" type="button">掷骰子</button>${divine}`;
       return;
     }
 
     if (state.phase === 'action') {
       const canBlade = !state.bladeUsed && hasBladeTarget(me);
+      const divine = me.charKey === 'tunlusi' && !me.divineUsed
+        ? '<button class="dock-btn" data-action="divine" type="button">神谕</button>'
+        : '';
       wrap.innerHTML = `
         <button class="dock-btn primary" data-action="end" type="button">结束回合</button>
         <button class="dock-btn" data-action="borrow" type="button">借债</button>
         <button class="dock-btn" data-action="sell" type="button" ${me.trophies.length ? '' : 'disabled'}>卖房</button>
         <button class="dock-btn" data-action="blade" type="button" ${canBlade ? '' : 'disabled'}>拼刺刀</button>
+        ${divine}
       `;
       return;
     }
@@ -946,11 +979,14 @@
       $('endTitle').textContent = '比赛结束';
     }
     $('rankList').innerHTML = (state.rankings || []).map((row) => `
-      <div class="rank-row${row.rank === 1 ? ' first' : ''}">
+      <div class="rank-row${row.rank === 1 ? ' first' : ''}" title="持有积分 ${formatPoints(row.points)} + 奖杯账面 ${formatPoints(row.trophyValue)}">
         <div class="rank-no">${row.rank}</div>
         <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
         <div class="rank-name">${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}</div>
-        <div class="rank-score">${formatPoints(row.points)}</div>
+        <div class="rank-score">
+          <strong>${formatPoints(row.netWorth)}</strong>
+          <small>${formatPoints(row.points)} + ${formatPoints(row.trophyValue)}</small>
+        </div>
       </div>
     `).join('');
   }
@@ -969,10 +1005,22 @@
       openSellModal();
     } else if (action === 'blade') {
       openBladeModal();
+    } else if (action === 'divine') {
+      openDivineModal();
     }
   }
 
   function handlePanelClick(event) {
+    const cardButton = event.target.closest('[data-card-key]');
+    if (cardButton) {
+      openCharacterCard(cardButton.dataset.cardKey);
+      return;
+    }
+    const divineButton = event.target.closest('[data-divine]');
+    if (divineButton) {
+      openDivineModal();
+      return;
+    }
     const button = event.target.closest('[data-item-uid]');
     if (!button) return;
     if (button.dataset.playerId !== app.meId) {
@@ -1002,6 +1050,80 @@
         <button class="ghost-btn" data-close-modal type="button">关闭</button>
       </div>
     `, { locked: false });
+  }
+
+  function openCharacterCard(charKey) {
+    const character = app.config?.characters?.find((c) => c.key === charKey);
+    if (!character) return;
+    const abilityLines = (character.ability || []).map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+    openModal(`
+      <div class="modal-title">${escapeHtml(character.name)} · 角色卡</div>
+      <img class="character-card-image" src="${escapeHtml(character.cardImage || character.avatar)}" alt="${escapeHtml(character.name)} 角色卡">
+      ${abilityLines ? `<ul class="character-ability-list">${abilityLines}</ul>` : ''}
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">关闭</button>
+      </div>
+    `);
+  }
+
+  function openDivineModal() {
+    const me = app.state?.players.find((player) => player.id === app.meId);
+    if (!me || me.charKey !== 'tunlusi') {
+      showToast('只有豚鲁斯可以发动神的旨意', 'error');
+      return;
+    }
+    if (me.divineUsed) {
+      showToast('神的旨意整局只能使用一次', 'error');
+      return;
+    }
+    openModal(`
+      <div class="modal-title">神的旨意</div>
+      <div class="modal-message">指定本人下一次骰子的点数，整局仅一次。</div>
+      <div class="pending-options divine-options">
+        ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" class="option-btn" data-divine-value="${n}">${n} 点</button>`).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">取消</button>
+      </div>
+    `);
+    $('modalCard').querySelectorAll('[data-divine-value]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const value = Number(button.dataset.divineValue);
+        closeModal();
+        app.socket.emit('game:divine', { value });
+      });
+    });
+  }
+
+  function toggleFullscreen() {
+    const doc = document;
+    const fsElement = doc.fullscreenElement || doc.webkitFullscreenElement;
+    if (fsElement) {
+      const exit = doc.exitFullscreen || doc.webkitExitFullscreen;
+      if (exit) Promise.resolve(exit.call(doc)).catch(() => {});
+      return;
+    }
+    const request =
+      doc.documentElement.requestFullscreen || doc.documentElement.webkitRequestFullscreen;
+    if (!request) {
+      showToast('当前浏览器不支持全屏', 'error');
+      return;
+    }
+    Promise.resolve(request.call(doc.documentElement)).catch(() => {
+      showToast('无法进入全屏，请检查浏览器权限', 'error');
+    });
+  }
+
+  function updateFullscreenButtons() {
+    const active = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    document.querySelectorAll('.fullscreen-btn').forEach((button) => {
+      button.textContent = active ? '退出全屏' : '全屏';
+    });
+  }
+
+  function exitFullscreen() {
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (exit) Promise.resolve(exit.call(document)).catch(() => {});
   }
 
   function openModal(html, options = {}) {
@@ -1063,7 +1185,7 @@
     if (!app.state || app.state.status !== 'playing') return;
     confirmDialog(
       '结束并结算',
-      '按当前积分结算，积分最高者获得世一头衔。',
+      '按“持有积分 + 奖杯账面积分”综合排名，最高者获得世一头衔。',
       '结算',
       () => app.socket.emit('game:finish')
     );
@@ -1140,17 +1262,18 @@
     }
     openModal(`
       <div class="modal-title">卖房</div>
-      <div class="modal-message">SWTT 以标注积分的 50% 回收奖杯，每次回收 1 个。</div>
+      <div class="modal-message">按该站当前奖杯数量 × 原始积分，再以 50% 一次性回收整站奖杯。</div>
       <div class="trophy-sell-list">
         ${me.trophies.map((trophy) => {
           const count = Math.max(1, trophy.streak || 1);
+          const price = Math.floor((trophy.points * count) / 2);
           return `
             <div class="sell-row">
               <div>
                 <strong>${escapeHtml(trophy.name)}</strong><br>
-                <span>${trophy.points} 积分 · 持有 ${count}/3 个</span>
+                <span>${trophy.points} 积分 × ${count}/3 个</span>
               </div>
-              <button type="button" data-sell-tile="${trophy.tileId}">回收 1 个 +${Math.floor(trophy.points / 2)}</button>
+              <button type="button" data-sell-tile="${trophy.tileId}">整站回收 +${price}</button>
             </div>
           `;
         }).join('')}

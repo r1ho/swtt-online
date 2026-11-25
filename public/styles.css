@@ -1793,7 +1793,69 @@ button:disabled {
   .player-panel { padding: 8px; }
 }
 
-@media (max-width: 1080px) {
+@media (min-width: 901px) and (max-width: 1100px) {
+  .game-main {
+    grid-template-columns: minmax(150px, 175px) minmax(0, 1fr) minmax(150px, 175px);
+    gap: 10px;
+    padding: 10px 12px 16px;
+  }
+
+  .table-column {
+    max-width: 100%;
+  }
+
+  .game-title {
+    display: none;
+  }
+
+  .game-topbar .topbar-brand::after {
+    content: "SWTT";
+    font-size: 11px;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    color: rgba(255, 247, 227, 0.78);
+  }
+
+  .board-hud {
+    width: 94%;
+    top: 54.5%;
+    padding: 6px 8px;
+  }
+
+  .board-hud .turn-info {
+    min-width: 92px;
+  }
+
+  .board-hud .turn-avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .board-hud .dice-box {
+    width: 38px;
+    height: 38px;
+  }
+
+  .board-hud .dock-btn {
+    padding: 6px 8px;
+    font-size: 10px;
+  }
+
+  .player-panel {
+    padding: 7px;
+  }
+
+  .pp-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .pp-points strong {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 900px) {
   .game-main {
     display: flex;
     flex-direction: column;

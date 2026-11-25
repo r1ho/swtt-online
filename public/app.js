@@ -967,7 +967,9 @@
         (player) => player.id !== app.meId && !player.eliminated && player.online && player.points > 0
       );
       const minAmount = Math.max(100, Number(pending.meta?.minAmount) || 100);
-      const needed = 1 - (me?.points ?? 0);
+      const points = me?.points ?? 0;
+      const target = Number(pending.meta?.target) || points + 1;
+      const needed = Math.max(0, target - points);
       const defaultAmount = Math.min(5000, Math.max(minAmount, needed, 500));
       $('pendingCard').innerHTML = `
         <div class="pending-kicker">SWTT · 积分不足</div>

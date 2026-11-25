@@ -194,7 +194,7 @@ const TILES = [
   },
   {
     id: 16, kind: 'tournament', name: '伦敦世乒赛团体', short: '伦敦世乒赛团体', points: 300,
-    region: '英国', languages: ['英语'], special: 'diceBonus', x: 87.68, y: 64.64,
+    region: '英国', languages: ['英语'], special: 'diceBonus', noPurchase: true, x: 87.68, y: 64.64,
   },
   {
     id: 17, kind: 'tournament', name: '卢布尔雅那球星挑战赛', short: '卢布尔雅那球星挑战赛', points: 600,
@@ -261,7 +261,7 @@ const TILES = [
   },
   {
     id: 34, kind: 'tournament', name: '成都混团世界杯', short: '成都混团世界杯', points: 300,
-    region: '中国大陆', languages: ['中文'], special: 'diceBonus', x: 12.09, y: 35.45,
+    region: '中国大陆', languages: ['中文'], special: 'diceBonus', noPurchase: true, x: 12.09, y: 35.45,
   },
   {
     id: 35, kind: 'tournament', name: '香港总决赛', short: '香港总决赛', points: 1500,

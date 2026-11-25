@@ -294,7 +294,7 @@ io.on('connection', (socket) => {
   socket.on('game:sell', (payload) => {
     try {
       const { room, player } = getSocketRoom(socket);
-      room.sellTrophy(player.id, payload?.tileId);
+      room.sellTrophy(player.id, payload?.tileId).catch((error) => sendError(socket, error));
     } catch (error) {
       sendError(socket, error);
     }

@@ -1576,6 +1576,107 @@ button:disabled {
   width: 100%;
 }
 
+.pending-options .option-btn[data-pending-value="roll"] {
+  flex: 1 1 100%;
+  min-height: 64px;
+  font-size: 18px;
+  text-align: center;
+  justify-content: center;
+}
+
+.option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.option-text small {
+  font-size: 10px;
+  color: rgba(255, 247, 227, 0.55);
+}
+
+.pending-watch {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  text-align: center;
+  color: var(--gold);
+  background: rgba(244, 196, 93, 0.08);
+  border: 1px solid rgba(244, 196, 93, 0.22);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.loan-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.loan-form .form-field.full {
+  grid-column: 1 / -1;
+}
+
+.loan-form .form-field label {
+  color: rgba(255, 247, 227, 0.62);
+}
+
+.loan-form .form-field select,
+.loan-form .form-field input {
+  border-color: rgba(255, 247, 227, 0.22);
+  background: rgba(3, 25, 29, 0.58);
+  color: var(--cream);
+}
+
+.loan-form .form-field select:focus,
+.loan-form .form-field input:focus {
+  border-color: var(--mint);
+  box-shadow: 0 0 0 3px rgba(120, 224, 194, 0.16);
+}
+
+.loan-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.loan-form-actions span {
+  color: rgba(255, 247, 227, 0.58);
+  font-size: 11px;
+}
+
+.loan-form-buttons {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.loan-cancel {
+  border: 1px solid rgba(255, 247, 227, 0.22);
+  background: rgba(255, 247, 227, 0.06);
+  color: rgba(255, 247, 227, 0.72);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.loan-cancel:hover {
+  background: rgba(255, 247, 227, 0.13);
+}
+
+.loan-form-actions .option-btn {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 8px 18px;
+  text-align: center;
+}
+
 .option-btn {
   flex: 1 1 150px;
   min-height: 46px;
@@ -1956,6 +2057,9 @@ button:disabled {
   .room-ticket { gap: 10px; padding: 13px 16px 13px 18px; }
   .room-ticket strong { font-size: 30px; }
   .modal-card, .pending-card { padding: 16px; border-radius: 20px; }
+  .loan-form { grid-template-columns: 1fr; }
+  .loan-form .form-field.full { grid-column: auto; }
+  .loan-form-actions { flex-wrap: wrap; }
   .form-grid { grid-template-columns: 1fr; }
   .toast-stack { top: 62px; right: 10px; left: 10px; }
   .toast { max-width: none; }

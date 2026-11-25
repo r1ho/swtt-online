@@ -175,6 +175,7 @@ class Room {
       turnsTaken: 0,
       divineUsed: false,
       divineValue: null,
+      lastLandedTileId: null,
     };
   }
 
@@ -362,18 +363,6 @@ class Room {
       value = randomInt(1, 6);
     }
 
-    if (
-      options.movement &&
-      (player.charKey === 'aolikeyou' || player.charKey === 'feilikeyou')
-    ) {
-      let guard = 0;
-      while (value === 1 && guard < 20) {
-        guard += 1;
-        this.log(`${player.name} 急脾气：掷出 1，重新投掷`, 'roll', player.id);
-        value = randomInt(1, 6);
-      }
-    }
-
     if (player.charKey === 'yunshuimu' && player.points <= 2500 && !player.eliminated) {
       const gain = value * 10;
       player.points += gain;
@@ -399,7 +388,24 @@ class Room {
     this.bladeUsed = false;
     this.broadcast();
 
-    const value = this.rollDie(player, '移动', { movement: true });
+    let value = this.rollDie(player, '移动', { movement: true });
+    let rerolls = 0;
+    while (
+      value === 1 &&
+      (player.charKey === 'aolikeyou' || player.charKey === 'feilikeyou') &&
+      rerolls < 20
+    ) {
+      rerolls += 1;
+      this.log(`${player.name} 急脾气：掷出 1，需要手动重新投掷`, 'roll', player.id);
+      await this.ask(player.id, {
+        type: 'roll',
+        title: '急脾气 · 重新投掷',
+        message: '你掷出了 1。请手动点击下方按钮重新投掷。',
+        options: [{ value: 'roll', label: '重新掷骰', tone: 'primary' }],
+      });
+      if (this.status !== 'playing' || player.eliminated) return;
+      value = this.rollDie(player, '移动', { movement: true });
+    }
     this.log(`${player.name} 掷出了 ${value} 点`, 'roll', playerId);
     this.broadcast();
     await sleep(420);
@@ -421,16 +427,13 @@ class Room {
     this.broadcast();
     await sleep(480);
 
-    // 路过/到达训练场与金奈的结算
+    // 路过训练场的结算（金奈只在到达时触发）
     for (const pos of path) {
       if (this.status !== 'playing' || player.eliminated) break;
       const tile = TILES[pos];
       if (tile.kind === 'training') {
         player.points += 1000;
         this.effectLog(player, '训练场', '经过训练场，积分 +1000', 'gain');
-      }
-      if (tile.special === 'jinNai') {
-        await this.applyJinNai(player);
       }
     }
     this.broadcast();
@@ -456,13 +459,13 @@ class Room {
     if (nth > 2) return;
     const amount = nth === 1 ? 100 : 50;
     const paid = await this.charge(player, amount, {
-      reason: nth === 1 ? '第一次路过金奈' : '第二次路过金奈',
+      reason: nth === 1 ? '第一次到达金奈' : '第二次到达金奈',
       allowFanshen: false,
     });
     if (paid > 0) {
-      this.effectLog(player, '金奈', `第 ${nth} 次路过，积分 -${amount}`, 'loss');
+      this.effectLog(player, '金奈', `第 ${nth} 次到达，积分 -${amount}`, 'loss');
     } else {
-      this.effectLog(player, '金奈', `第 ${nth} 次路过，惩罚已免除`, 'info');
+      this.effectLog(player, '金奈', `第 ${nth} 次到达，惩罚已免除`, 'info');
     }
   }
 
@@ -534,32 +537,20 @@ class Room {
         continue;
       }
       const total = Math.ceil(loan.principal * (1 + loan.interest / 100));
-      if (player.points < total) {
-        this.forceSellToReach(player, total);
-      }
-      const paid = Math.max(0, Math.min(total, player.points));
-      player.points -= paid;
-      lender.points += paid;
+      player.points -= total;
+      lender.points += total;
       loan.status = 'closed';
-      loan.paid = paid;
+      loan.paid = total;
       this.effectLog(
         player,
         '借债到期',
-        `${lender.name} 收回 ${paid} 积分${paid < total ? '（不足额）' : ''}`,
-        paid < total ? 'loss' : 'info'
+        `${lender.name} 收回 ${total} 积分`,
+        'loss'
       );
-      this.normalizeFinances(player);
       this.broadcast();
+      await this.normalizeFinances(player);
+      if (this.status !== 'playing' || player.eliminated) return;
       await sleep(250);
-    }
-  }
-
-  forceSellToReach(player, target) {
-    while (player.points < target && player.trophies.length > 0) {
-      const trophy = [...player.trophies].sort(
-        (a, b) => this.trophySaleValue(b) - this.trophySaleValue(a)
-      )[0];
-      this.sellTrophyInternal(player, trophy, true);
     }
   }
 
@@ -586,18 +577,159 @@ class Room {
     return price;
   }
 
-  normalizeFinances(player) {
-    if (!player || player.eliminated) return;
-    while (player.points <= 0 && player.trophies.length > 0) {
-      const trophy = [...player.trophies].sort(
-        (a, b) => this.trophySaleValue(b) - this.trophySaleValue(a)
-      )[0];
-      this.sellTrophyInternal(player, trophy, true);
+  async askInsolvencyLoan(player) {
+    const lenders = this.alivePlayers.filter(
+      (p) => p.id !== player.id && p.points > 0 && p.online
+    );
+    if (!lenders.length) {
+      this.log('没有其他在线玩家可以借款', 'info', player.id);
+      return false;
     }
-    if (player.points <= 0) {
+    const minAmount = 100;
+    const form = await this.ask(player.id, {
+      type: 'loanForm',
+      title: '借积分',
+      message: `当前积分 ${player.points}，请选择债主和借款条件。`,
+      options: [],
+      meta: { minAmount, maxAmount: 5000, playerPoints: player.points },
+    });
+    if (!form || typeof form !== 'object') return false;
+    const lender = this.playerById(form.lenderId);
+    const amount = Math.round(Number(form.amount));
+    const interest = Math.round(Number(form.interest));
+    const term = Math.round(Number(form.term));
+    if (!lender || lender.eliminated || lender.id === player.id || !lender.online) {
+      this.log('借款条件无效：债主不可用', 'info', player.id);
+      return false;
+    }
+    if (!Number.isFinite(amount) || amount < 100 || amount > 5000) {
+      this.log('借款条件无效：金额需在 100-5000 之间', 'info', player.id);
+      return false;
+    }
+    if (!Number.isFinite(interest) || interest < 0 || interest > 100) {
+      this.log('借款条件无效：利息需在 0-100% 之间', 'info', player.id);
+      return false;
+    }
+    if (!Number.isFinite(term) || term < 1 || term > 5) {
+      this.log('借款条件无效：期限需在 1-5 回合之间', 'info', player.id);
+      return false;
+    }
+    if (lender.points < amount) {
+      this.log('借款条件无效：债主积分不足', 'info', player.id);
+      return false;
+    }
+    const accept = await this.ask(lender.id, {
+      type: 'loan',
+      title: '借债请求',
+      message: `${player.name} 积分不足，向你借款 ${amount} 积分，利息 ${interest}%，期限 ${term} 回合。`,
+      options: [
+        { value: 'yes', label: '接受', tone: 'primary' },
+        { value: 'no', label: '拒绝' },
+      ],
+      meta: { amount, interest, term, borrowerId: player.id, lenderId: lender.id },
+    });
+    if (accept !== 'yes') {
+      this.log(`${lender.name} 拒绝了 ${player.name} 的借债`, 'info', lender.id);
+      return false;
+    }
+    if (lender.points < amount) {
+      this.log('债主积分已不足，借款失败', 'info', player.id);
+      return false;
+    }
+    lender.points -= amount;
+    player.points += amount;
+    this.loans.push({
+      id: makeId(6),
+      borrowerId: player.id,
+      lenderId: lender.id,
+      principal: amount,
+      interest,
+      dueRound: this.round + term,
+      createdRound: this.round,
+      status: 'active',
+      paid: 0,
+    });
+    this.effectLog(
+      player,
+      '借债',
+      `向 ${lender.name} 借入 ${amount} 积分，${term} 回合后还 ${Math.ceil(amount * (1 + interest / 100))}`,
+      'info'
+    );
+    this.broadcast();
+    return true;
+  }
+
+  async normalizeFinances(player) {
+    if (!player || player.eliminated || this.status !== 'playing') return;
+    let guard = 0;
+    while (this.status === 'playing' && !player.eliminated && player.points <= 0 && guard < 20) {
+      guard += 1;
+      const lenders = this.alivePlayers.filter(
+        (p) => p.id !== player.id && p.points > 0 && p.online
+      );
+      const options = [];
+      if (lenders.length > 0) {
+        options.push({ value: 'borrow', label: '借积分', tone: 'primary' });
+      }
+      if (player.trophies.length > 0) {
+        options.push({ value: 'sell', label: '卖出奖杯' });
+      }
+      options.push({ value: 'giveup', label: '接受淘汰', tone: 'danger' });
+
+      const choice = await this.ask(player.id, {
+        type: 'insolvency',
+        title: '积分不足',
+        message: `当前持有 ${player.points} 积分。请先借积分，或卖出奖杯使积分回到正数；否则将被淘汰。`,
+        options,
+      });
+
+      if (choice === 'borrow') {
+        const ok = await this.askInsolvencyLoan(player);
+        if (!ok) continue;
+        if (player.points > 0) break;
+        continue;
+      }
+
+      if (choice === 'sell') {
+        if (player.trophies.length === 0) continue;
+        const sellOptions = player.trophies.map((trophy) => ({
+          value: String(trophy.tileId),
+          label: trophy.name,
+          sub: `回收 +${this.trophySaleValue(trophy)}`,
+        }));
+        const tileId = await this.ask(player.id, {
+          type: 'sellChoice',
+          title: '选择卖出奖杯',
+          message: '请选择要卖给 SWTT 的奖杯，回收价为账面价值的一半。',
+          options: sellOptions,
+        });
+        const trophy = player.trophies.find((t) => t.tileId === Number(tileId));
+        if (trophy) {
+          this.sellTrophyInternal(player, trophy, false);
+          this.broadcast();
+        }
+        continue;
+      }
+
+      if (choice === 'giveup') {
+        this.eliminate(player);
+        break;
+      }
+    }
+    if (player.points <= 0 && !player.eliminated) {
       this.eliminate(player);
     }
     this.checkGameEnd();
+    if (
+      this.status === 'playing' &&
+      !player.eliminated &&
+      player.points > 0 &&
+      this.current?.id === player.id &&
+      this.phase === 'action' &&
+      !this.pending
+    ) {
+      await this.recheckPurchase(player);
+    }
   }
 
   eliminate(player) {
@@ -690,9 +822,54 @@ class Room {
       this.effectLog(player, '训练场', '到达训练场，积分 +1000', 'gain');
       this.broadcast();
     }
-    if (tile.special === 'jinNai') {
-      await this.applyJinNai(player);
+  }
+
+  async offerPurchase(player, tile) {
+    if (this.status !== 'playing' || player.eliminated) return false;
+    if (player.points < tile.points) {
+      this.log(`${player.name} 积分不足，无法兑换 ${tile.name} 奖杯`, 'info', player.id);
+      return false;
     }
+    const answer = await this.ask(player.id, {
+      type: 'buy',
+      title: tile.name,
+      message: `花费 ${tile.points} 积分兑换本站第 1 个奖杯？（每站上限 3 个）`,
+      image: null,
+      options: [
+        { value: 'yes', label: '兑换奖杯', tone: 'primary' },
+        { value: 'no', label: '放弃' },
+      ],
+    });
+    if (answer !== 'yes') {
+      this.log(`${player.name} 放弃兑换 ${tile.name} 奖杯`, 'info', player.id);
+      return false;
+    }
+    player.points -= tile.points;
+    player.trophies.push({
+      tileId: tile.id,
+      name: tile.name,
+      short: tile.short,
+      points: tile.points,
+      streak: 1,
+    });
+    this.effectLog(player, '夺得奖杯', `${tile.name} · 花费 ${tile.points} 积分`, 'gain');
+    this.broadcast();
+    await this.normalizeFinances(player);
+    return true;
+  }
+
+  async recheckPurchase(player) {
+    if (this.status !== 'playing' || player.eliminated || this.pending) return false;
+    if (this.current?.id !== player.id || this.phase !== 'action') return false;
+    const tile = TILE_BY_ID[player.lastLandedTileId];
+    if (!tile || tile.kind !== 'tournament' || tile.noPurchase) return false;
+    if (player.pos !== tile.id) return false;
+    const owner = this.players.find(
+      (p) => p.trophies.some((t) => t.tileId === tile.id) && !p.eliminated
+    );
+    if (owner) return false;
+    if (player.points < tile.points) return false;
+    return this.offerPurchase(player, tile);
   }
 
   async resolveLanding(player, depth = 0) {
@@ -703,11 +880,18 @@ class Room {
     }
     const tile = TILES[player.pos];
     const character = CHARACTER_BY_KEY[player.charKey];
+    player.lastLandedTileId = tile.id;
 
     // 角色主场优势
     if (character?.homeTile === tile.id && tile.kind === 'tournament') {
       player.points += 250;
       this.effectLog(player, '主场优势', `到达${tile.short}，积分 +250`, 'gain');
+    }
+
+    // 金奈：只在到达时计算第一次/第二次
+    if (tile.special === 'jinNai') {
+      await this.applyJinNai(player);
+      if (this.status !== 'playing' || player.eliminated) return;
     }
 
     // 持续效果：米其林（仅具体赛事地，特殊格子不加分）
@@ -746,39 +930,12 @@ class Room {
 
     if (this.status !== 'playing' || player.eliminated) return;
 
-    if (tile.kind === 'tournament') {
+    if (tile.kind === 'tournament' && !tile.noPurchase) {
       const owner = this.players.find((p) =>
         p.trophies.some((t) => t.tileId === tile.id) && !p.eliminated
       );
       if (!owner) {
-        if (player.points >= tile.points) {
-          const answer = await this.ask(player.id, {
-            type: 'buy',
-            title: tile.name,
-            message: `花费 ${tile.points} 积分兑换本站第 1 个奖杯？（每站上限 3 个）`,
-            image: null,
-            options: [
-              { value: 'yes', label: '兑换奖杯', tone: 'primary' },
-              { value: 'no', label: '放弃' },
-            ],
-          });
-          if (answer === 'yes') {
-            player.points -= tile.points;
-            player.trophies.push({
-              tileId: tile.id,
-              name: tile.name,
-              short: tile.short,
-              points: tile.points,
-              streak: 1,
-            });
-            this.effectLog(player, '夺得奖杯', `${tile.name} · 花费 ${tile.points} 积分`, 'gain');
-            this.normalizeFinances(player);
-          } else {
-            this.log(`${player.name} 放弃兑换 ${tile.name} 奖杯`, 'info', player.id);
-          }
-        } else {
-          this.log(`${player.name} 积分不足，无法兑换 ${tile.name} 奖杯`, 'info', player.id);
-        }
+        await this.offerPurchase(player, tile);
       } else if (owner.id === player.id) {
         const trophy = owner.trophies.find((t) => t.tileId === tile.id);
         if (trophy.streak < 3 && player.points >= tile.points) {
@@ -800,7 +957,7 @@ class Room {
               `${tile.name} 奖杯达到 ${trophy.streak}/3`,
               'gain'
             );
-            this.normalizeFinances(player);
+            await this.normalizeFinances(player);
           }
         } else if (trophy.streak >= 3) {
           this.log(`${tile.name} 已达 3 个奖杯上限，无法继续兑换`, 'info', player.id);
@@ -962,6 +1119,13 @@ class Room {
   }
 
   async rollEffect(player, purpose) {
+    await this.ask(player.id, {
+      type: 'roll',
+      title: `${purpose} · 再次掷骰`,
+      message: '请手动点击下方按钮投掷骰子。',
+      options: [{ value: 'roll', label: '掷骰子', tone: 'primary' }],
+    });
+    if (this.status !== 'playing' || player.eliminated) return 0;
     const value = this.rollDie(player, purpose);
     this.log(`${player.name} 为「${purpose}」重新掷骰：${value} 点`, 'roll', player.id);
     this.broadcast();
@@ -1116,7 +1280,7 @@ class Room {
           `令 ${options.owner.name} 支付 ${amount} 积分给你`,
           'gain'
         );
-        this.normalizeFinances(options.owner);
+        await this.normalizeFinances(options.owner);
         this.broadcast();
         return amount;
       }
@@ -1173,7 +1337,7 @@ class Room {
     if (options.recipient && !options.recipient.eliminated) {
       options.recipient.points += amount;
     }
-    this.normalizeFinances(payer);
+    await this.normalizeFinances(payer);
     this.broadcast();
     return amount;
   }
@@ -1269,7 +1433,7 @@ class Room {
         } else {
           target.points -= 200;
           this.effectLog(p, '抽签嘉宾', `${target.name} 掷出 ${value}，积分 -200`, 'loss');
-          this.normalizeFinances(target);
+          await this.normalizeFinances(target);
         }
         break;
       }
@@ -1476,9 +1640,6 @@ class Room {
         player.points += 1000;
         this.effectLog(player, '训练场', '经过训练场，积分 +1000', 'gain');
       }
-      if (tile.special === 'jinNai') {
-        await this.applyJinNai(player);
-      }
       if (player.eliminated || this.status !== 'playing') return;
     }
     if (this.status === 'playing' && !player.eliminated) {
@@ -1584,7 +1745,7 @@ class Room {
         consume();
         target.points -= 500;
         this.effectLog(player, '泻药', `对 ${target.name} 使用，积分 -500`, 'loss');
-        this.normalizeFinances(target);
+        await this.normalizeFinances(target);
       } else if (item.key === 'qingshen') {
         const tile = TILES[player.pos];
         const owns = player.trophies.some((t) => t.tileId === tile.id);
@@ -1603,6 +1764,7 @@ class Room {
       }
       this.phase = 'action';
       this.broadcast();
+      if (item.key === 'qingshen') await this.recheckPurchase(player);
     } catch (error) {
       this.phase = 'action';
       this.broadcast();
@@ -1610,7 +1772,7 @@ class Room {
     }
   }
 
-  sellTrophy(playerId, tileId) {
+  async sellTrophy(playerId, tileId) {
     this.ensureTurn(playerId);
     if (this.phase !== 'action') throw new GameError('掷骰后才能卖房');
     const player = this.current;
@@ -1618,6 +1780,7 @@ class Room {
     if (!trophy) throw new GameError('你没有这站奖杯');
     this.sellTrophyInternal(player, trophy, false);
     this.broadcast();
+    await this.recheckPurchase(player);
   }
 
   async challengeBlade(playerId, targetId) {
@@ -1744,6 +1907,7 @@ class Room {
       );
       this.phase = 'action';
       this.broadcast();
+      await this.recheckPurchase(borrower);
     } catch (error) {
       this.phase = 'action';
       this.broadcast();

@@ -922,7 +922,17 @@
     const state = app.state;
     const pending = state.pending;
     const backdrop = $('pendingBackdrop');
-    if (!pending || pending.playerId !== app.meId) {
+    if (!pending) {
+      backdrop.classList.add('hidden');
+      app.pendingId = null;
+      app.pendingSubmitting = false;
+      return;
+    }
+
+    const mine = pending.playerId === app.meId;
+    const isPublicCard = pending.type === 'card'
+      && ['chance', 'fate'].includes(pending.meta?.deck);
+    if (!mine && !isPublicCard) {
       backdrop.classList.add('hidden');
       app.pendingId = null;
       app.pendingSubmitting = false;
@@ -932,14 +942,111 @@
     app.pendingId = pending.id;
     app.pendingSubmitting = false;
 
+    const owner = state.players.find((player) => player.id === pending.playerId);
     const image = pending.image
       ? `<img class="pending-image" src="${escapeHtml(pending.image)}" alt="${escapeHtml(pending.title)}">`
       : '';
+
+    // 其他玩家同步围观命运/机会卡
+    if (!mine && isPublicCard) {
+      $('pendingCard').innerHTML = `
+        <div class="pending-kicker">SWTT · 抽卡同步</div>
+        <div class="pending-title">${escapeHtml(owner?.name || '玩家')} 抽到了 ${escapeHtml(pending.title)}</div>
+        <div class="pending-message">${escapeHtml(pending.message || '')}</div>
+        ${image}
+        <div class="pending-watch">等待 ${escapeHtml(owner?.name || '玩家')} 关闭卡牌…</div>
+      `;
+      backdrop.classList.remove('hidden');
+      return;
+    }
+
+    // 破产时的借积分表单
+    if (pending.type === 'loanForm') {
+      const me = state.players.find((player) => player.id === app.meId);
+      const lenders = state.players.filter(
+        (player) => player.id !== app.meId && !player.eliminated && player.online && player.points > 0
+      );
+      const minAmount = Math.max(100, Number(pending.meta?.minAmount) || 100);
+      const needed = 1 - (me?.points ?? 0);
+      const defaultAmount = Math.min(5000, Math.max(minAmount, needed, 500));
+      $('pendingCard').innerHTML = `
+        <div class="pending-kicker">SWTT · 积分不足</div>
+        <div class="pending-title">${escapeHtml(pending.title)}</div>
+        <div class="pending-message">${escapeHtml(pending.message || '')}</div>
+        <form id="pendingLoanForm" class="loan-form">
+          <div class="form-field full">
+            <label for="pendingLender">债主</label>
+            <select id="pendingLender">
+              ${lenders.map((player) => `<option value="${escapeHtml(player.id)}">${escapeHtml(player.name)} · ${formatPoints(player.points)} 积分</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="pendingAmount">借款积分</label>
+            <input id="pendingAmount" type="number" min="${minAmount}" max="5000" step="50" value="${defaultAmount}">
+          </div>
+          <div class="form-field">
+            <label for="pendingInterest">利息 %</label>
+            <input id="pendingInterest" type="number" min="0" max="100" step="1" value="10">
+          </div>
+          <div class="form-field">
+            <label for="pendingTerm">期限（回合）</label>
+            <input id="pendingTerm" type="number" min="1" max="5" step="1" value="2">
+          </div>
+          <div class="loan-form-actions">
+            <span>当前积分：${formatPoints(me?.points ?? 0)}</span>
+            <div class="loan-form-buttons">
+              <button class="loan-cancel" id="pendingLoanCancel" type="button">返回</button>
+              <button class="option-btn primary" type="submit">确认借款</button>
+            </div>
+          </div>
+        </form>
+      `;
+      $('pendingLoanCancel').addEventListener('click', () => {
+        if (app.pendingSubmitting) return;
+        app.pendingSubmitting = true;
+        app.socket.emit('pending:respond', { id: pending.id, value: null });
+        setTimeout(() => { app.pendingSubmitting = false; }, 1000);
+      });
+      $('pendingLoanForm').addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (app.pendingSubmitting) return;
+        const lenderId = $('pendingLender').value;
+        const amount = Number($('pendingAmount').value);
+        const interest = Number($('pendingInterest').value);
+        const term = Number($('pendingTerm').value);
+        if (!lenderId) {
+          showToast('没有可借款的玩家', 'error');
+          return;
+        }
+        if (!Number.isFinite(amount) || amount < minAmount || amount > 5000) {
+          showToast(`借款积分需在 ${minAmount}-5000 之间`, 'error');
+          return;
+        }
+        if (!Number.isFinite(interest) || interest < 0 || interest > 100) {
+          showToast('利息需在 0-100% 之间', 'error');
+          return;
+        }
+        if (!Number.isFinite(term) || term < 1 || term > 5) {
+          showToast('期限需在 1-5 回合之间', 'error');
+          return;
+        }
+        app.pendingSubmitting = true;
+        $('pendingLoanForm').querySelectorAll('button, input, select').forEach((el) => { el.disabled = true; });
+        app.socket.emit('pending:respond', {
+          id: pending.id,
+          value: { lenderId, amount, interest, term },
+        });
+        setTimeout(() => { app.pendingSubmitting = false; }, 1500);
+      });
+      backdrop.classList.remove('hidden');
+      return;
+    }
+
     const options = (pending.options || []).map((option, index) => {
       const tone = option.tone === 'primary' ? ' primary' : option.tone === 'danger' ? ' danger' : '';
       const playerInfo = option.avatar
         ? `<span class="option-player"><img src="${escapeHtml(option.avatar)}" alt=""><span>${escapeHtml(option.label)}<small>${escapeHtml(option.sub || '')}</small></span></span>`
-        : `<span>${escapeHtml(option.label)}</span>`;
+        : `<span class="option-text"><span>${escapeHtml(option.label)}</span>${option.sub ? `<small>${escapeHtml(option.sub)}</small>` : ''}</span>`;
       return `<button type="button" class="option-btn${tone}" data-pending-value="${escapeHtml(option.value)}" ${index === 0 ? 'autofocus' : ''}>${playerInfo}</button>`;
     }).join('');
 

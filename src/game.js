@@ -1078,8 +1078,16 @@ class Room {
         this.effectLog(player, '理发店', '下一回合暂停一次', 'info');
       }
     } else if (tile.kind === 'gym') {
-      player.points += 500;
-      this.effectLog(player, '健身房', '到达健身房，积分 +500', 'gain');
+      const gymGain = player.charKey === 'yuguogui' ? 1000 : 500;
+      player.points += gymGain;
+      this.effectLog(
+        player,
+        player.charKey === 'yuguogui' ? '强健体魄' : '健身房',
+        player.charKey === 'yuguogui'
+          ? `到达健身房，双倍积分 +${gymGain}`
+          : `到达健身房，积分 +${gymGain}`,
+        'gain'
+      );
     } else if (tile.kind === 'sponsor') {
       await this.drawItem(player);
     }

@@ -22,6 +22,8 @@
     animations: new Map(),
     pendingId: null,
     pendingSubmitting: false,
+    hiddenPendingId: null,
+    divineMinimized: false,
     bannerTimer: null,
     feedRendered: '',
     rejoining: false,
@@ -206,6 +208,7 @@
     $('lobbyLeaveBtn').addEventListener('click', () => confirmLeave());
     $('gameLeaveBtn').addEventListener('click', () => confirmLeave());
     $('endLeaveBtn').addEventListener('click', leaveRoom);
+    $('resumeActionBtn').addEventListener('click', resumeAction);
     $('startBtn').addEventListener('click', startGame);
     $('finishBtn').addEventListener('click', confirmFinish);
 
@@ -433,6 +436,9 @@
     app.meId = null;
     app.pendingId = null;
     app.pendingSubmitting = false;
+    app.hiddenPendingId = null;
+    app.divineMinimized = false;
+    $('resumeActionBtn').classList.add('hidden');
     app.displayPos.clear();
     app.animations.forEach((animation) => clearTimeout(animation.timer));
     app.animations.clear();
@@ -532,6 +538,7 @@
     renderControls(me, current, pendingPlayer);
     renderFeed(state);
     renderPending();
+    updateResumeAction();
     renderEnd(state);
     updateEffectBanner(state);
 
@@ -915,6 +922,55 @@
     app.bannerTimer = setTimeout(() => banner.classList.remove('show'), 3400);
   }
 
+  function updateResumeAction() {
+    const button = $('resumeActionBtn');
+    if (!button) return;
+    const state = app.state;
+    const pending = state?.pending;
+    const hiddenRoll = Boolean(
+      pending &&
+      pending.playerId === app.meId &&
+      ['roll', 'number'].includes(pending.type) &&
+      app.hiddenPendingId === pending.id
+    );
+    if (state?.status === 'playing' && hiddenRoll) {
+      button.textContent = pending.type === 'roll' ? '继续掷骰' : '继续选择';
+      button.classList.remove('hidden');
+      return;
+    }
+    if (state?.status === 'playing' && app.divineMinimized) {
+      button.textContent = '继续选择点数';
+      button.classList.remove('hidden');
+      return;
+    }
+    button.classList.add('hidden');
+  }
+
+  function hidePendingForMap() {
+    const pending = app.state?.pending;
+    if (!pending || pending.playerId !== app.meId) return;
+    if (!['roll', 'number'].includes(pending.type)) return;
+    app.hiddenPendingId = pending.id;
+    app.pendingId = pending.id;
+    $('pendingBackdrop').classList.add('hidden');
+    updateResumeAction();
+  }
+
+  function resumeAction() {
+    if (app.hiddenPendingId) {
+      app.hiddenPendingId = null;
+      app.pendingId = null;
+      renderPending();
+      updateResumeAction();
+      return;
+    }
+    if (app.divineMinimized) {
+      app.divineMinimized = false;
+      openDivineModal();
+      updateResumeAction();
+    }
+  }
+
   function renderPending() {
     const state = app.state;
     const pending = state.pending;
@@ -922,17 +978,29 @@
     if (!pending) {
       backdrop.classList.add('hidden');
       app.pendingId = null;
+      app.hiddenPendingId = null;
       app.pendingSubmitting = false;
+      updateResumeAction();
       return;
+    }
+    if (app.hiddenPendingId && app.hiddenPendingId !== pending.id) {
+      app.hiddenPendingId = null;
     }
 
     const mine = pending.playerId === app.meId;
     const isPublicCard = pending.type === 'card'
       && ['chance', 'fate'].includes(pending.meta?.deck);
+    if (mine && ['roll', 'number'].includes(pending.type) && app.hiddenPendingId === pending.id) {
+      backdrop.classList.add('hidden');
+      app.pendingId = pending.id;
+      updateResumeAction();
+      return;
+    }
     if (!mine && !isPublicCard) {
       backdrop.classList.add('hidden');
       app.pendingId = null;
       app.pendingSubmitting = false;
+      updateResumeAction();
       return;
     }
     if (app.pendingId === pending.id) return;
@@ -1055,6 +1123,7 @@
       <div class="pending-message">${escapeHtml(pending.message || '')}</div>
       ${image}
       <div class="pending-options${pending.options?.length === 2 ? ' stack' : ''}" id="pendingOptions">${options}</div>
+      ${['roll', 'number'].includes(pending.type) ? '<button class="ghost-btn pending-map-btn" id="pendingMapBtn" type="button">查看地图</button>' : ''}
     `;
     $('pendingOptions').addEventListener('click', (event) => {
       const button = event.target.closest('[data-pending-value]');
@@ -1064,6 +1133,8 @@
       app.socket.emit('pending:respond', { id: pending.id, value: button.dataset.pendingValue });
       setTimeout(() => { app.pendingSubmitting = false; }, 1200);
     });
+    const mapButton = $('pendingMapBtn');
+    if (mapButton) mapButton.addEventListener('click', hidePendingForMap);
     backdrop.classList.remove('hidden');
   }
 
@@ -1235,6 +1306,7 @@
       showToast('神的旨意整局只能使用一次', 'error');
       return;
     }
+    app.divineMinimized = false;
     openModal(`
       <div class="modal-title">神的旨意</div>
       <div class="modal-message">指定本人下一次骰子的点数，整局仅一次。</div>
@@ -1242,16 +1314,24 @@
         ${[1, 2, 3, 4, 5, 6].map((n) => `<button type="button" class="option-btn" data-divine-value="${n}">${n} 点</button>`).join('')}
       </div>
       <div class="modal-actions">
+        <button class="ghost-btn" id="divineMapBtn" type="button">查看地图</button>
         <button class="ghost-btn" data-close-modal type="button">取消</button>
       </div>
     `);
+    $('divineMapBtn').addEventListener('click', () => {
+      closeModal();
+      app.divineMinimized = true;
+      updateResumeAction();
+    });
     $('modalCard').querySelectorAll('[data-divine-value]').forEach((button) => {
       button.addEventListener('click', () => {
         const value = Number(button.dataset.divineValue);
+        app.divineMinimized = false;
         closeModal();
         app.socket.emit('game:divine', { value });
       });
     });
+    updateResumeAction();
   }
 
   function toggleFullscreen() {

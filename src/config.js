@@ -4,7 +4,7 @@ const CHARACTERS = [
   {
     key: 'yunshuimu',
     name: '云水母',
-    avatar: '/assets/avatars/yunshuimu.webp',
+    avatar: '/assets/avatars/yunshuimu.webp?v=beige2',
     cardImage: '/assets/characters/yunshuimu.jpg',
     gender: 'male',
     country: '中国',
@@ -20,7 +20,7 @@ const CHARACTERS = [
   {
     key: 'bulugui',
     name: '布鲁龟',
-    avatar: '/assets/avatars/bulugui.webp',
+    avatar: '/assets/avatars/bulugui.webp?v=beige2',
     cardImage: '/assets/characters/bulugui.jpg',
     gender: 'female',
     country: '巴西',
@@ -36,7 +36,7 @@ const CHARACTERS = [
   {
     key: 'zhangbenzhiyao',
     name: '张本智鳐',
-    avatar: '/assets/avatars/zhangbenzhiyao.webp',
+    avatar: '/assets/avatars/zhangbenzhiyao.webp?v=beige2',
     cardImage: '/assets/characters/zhangbenzhiyao.jpg',
     gender: 'male',
     country: '日本',
@@ -52,7 +52,7 @@ const CHARACTERS = [
   {
     key: 'zhangbenmeiyao',
     name: '张本美鳐',
-    avatar: '/assets/avatars/zhangbenmeiyao.webp',
+    avatar: '/assets/avatars/zhangbenmeiyao.webp?v=beige2',
     cardImage: '/assets/characters/zhangbenmeiyao.jpg',
     gender: 'female',
     country: '日本',
@@ -68,7 +68,7 @@ const CHARACTERS = [
   {
     key: 'aolikeyou',
     name: '艾利克鱿',
-    avatar: '/assets/avatars/aolikeyou.webp',
+    avatar: '/assets/avatars/aolikeyou.webp?v=beige2',
     cardImage: '/assets/characters/aolikeyou.jpg',
     gender: 'male',
     country: '法国',
@@ -84,7 +84,7 @@ const CHARACTERS = [
   {
     key: 'feilikeyou',
     name: '菲利克鱿',
-    avatar: '/assets/avatars/feilikeyou.webp',
+    avatar: '/assets/avatars/feilikeyou.webp?v=beige2',
     cardImage: '/assets/characters/feilikeyou.jpg',
     gender: 'male',
     country: '法国',
@@ -100,7 +100,7 @@ const CHARACTERS = [
   {
     key: 'tunlusi',
     name: '豚鲁斯',
-    avatar: '/assets/avatars/tunlusi.webp',
+    avatar: '/assets/avatars/tunlusi.webp?v=beige2',
     cardImage: '/assets/characters/tunlusi.jpg',
     gender: 'male',
     country: '瑞典',
@@ -115,7 +115,7 @@ const CHARACTERS = [
   {
     key: 'yuguogui',
     name: '雨果龟',
-    avatar: '/assets/avatars/yuguogui.webp',
+    avatar: '/assets/avatars/yuguogui.webp?v=beige2',
     cardImage: '/assets/characters/yuguogui.jpg',
     gender: 'male',
     country: '巴西',

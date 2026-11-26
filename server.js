@@ -41,7 +41,12 @@ app.use(
   express.static(path.join(__dirname, 'public'), {
     maxAge: '7d',
     setHeaders(res, filePath) {
-      if (filePath.endsWith('.html') || filePath.endsWith('app.js') || filePath.endsWith('styles.css')) {
+      const normalized = filePath.replace(/\\/g, '/');
+      if (normalized.includes('/assets/avatars/')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else if (filePath.endsWith('.html') || filePath.endsWith('app.js') || filePath.endsWith('styles.css')) {
         res.setHeader('Cache-Control', 'no-cache');
       }
     },
@@ -49,6 +54,7 @@ app.use(
 );
 
 app.get('/api/config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
     characters: CHARACTERS,
     tiles: TILES,

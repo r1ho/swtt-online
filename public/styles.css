@@ -267,7 +267,7 @@ button:disabled {
 
 .char-picker {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -276,16 +276,18 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   padding: 8px 4px 7px;
   border-radius: 15px;
   border: 2px solid transparent;
   background: rgba(235, 245, 255, 0.045);
   color: rgba(235, 245, 255, 0.82);
   transition: 0.16s ease;
+  cursor: pointer;
+  user-select: none;
 }
 
-.char-choice:hover:not(:disabled) {
+.char-choice:hover:not(.taken) {
   background: rgba(235, 245, 255, 0.1);
   transform: translateY(-2px);
 }
@@ -300,6 +302,7 @@ button:disabled {
 .char-choice.taken {
   opacity: 0.34;
   filter: grayscale(0.85);
+  cursor: not-allowed;
 }
 
 .char-choice img {
@@ -320,6 +323,28 @@ button:disabled {
   line-height: 1;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.char-detail-btn {
+  border: 1px solid rgba(235, 245, 255, 0.28);
+  border-radius: 999px;
+  padding: 3px 11px;
+  background: rgba(235, 245, 255, 0.08);
+  color: rgba(235, 245, 255, 0.78);
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 700;
+  transition: 0.16s ease;
+}
+
+.char-detail-btn:hover {
+  background: rgba(109, 182, 255, 0.2);
+  border-color: rgba(109, 182, 255, 0.55);
+  color: #fff;
+}
+
+.char-choice.taken .char-detail-btn {
+  cursor: pointer;
 }
 
 .entry-actions {
@@ -656,8 +681,8 @@ button:disabled {
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: #fefcef;
-  border: 2px solid var(--player-color, #fff);
-  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.55), 0 0 0 2px rgba(5, 18, 36, 0.45);
+  border: 1px solid var(--player-color, #fff);
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(5, 18, 36, 0.45);
   transition: left 0.2s ease, top 0.2s ease, transform 0.16s ease;
   overflow: hidden;
   z-index: 6;
@@ -674,7 +699,7 @@ button:disabled {
 
 .token.active {
   z-index: 9;
-  box-shadow: 0 0 0 3px var(--gold), 0 4px 12px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 2px var(--gold), 0 4px 12px rgba(0, 0, 0, 0.6);
   transform: translate(-50%, -50%) scale(1.12);
 }
 
@@ -2064,7 +2089,7 @@ button:disabled {
   .player-panel { min-height: 0; }
 
   .char-picker {
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .game-title { display: none; }

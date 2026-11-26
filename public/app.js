@@ -162,12 +162,14 @@
       const taken = app.taken.has(char.key);
       const selected = app.selectedChar === char.key;
       return `
-        <button type="button" class="char-choice${selected ? ' selected' : ''}${taken ? ' taken' : ''}"
-                data-char="${escapeHtml(char.key)}" ${taken ? 'disabled' : ''}
-                title="${escapeHtml(`${char.name}：${(char.ability || []).join('；')}`)}">
+        <div class="char-choice${selected ? ' selected' : ''}${taken ? ' taken' : ''}"
+             data-char="${escapeHtml(char.key)}" data-char-select="${escapeHtml(char.key)}"
+             role="button" tabindex="${taken ? -1 : 0}" aria-disabled="${taken ? 'true' : 'false'}"
+             title="${escapeHtml(`${char.name}：${(char.ability || []).join('；')}`)}">
           <img src="${escapeHtml(char.avatar)}" alt="${escapeHtml(char.name)}" draggable="false">
           <span>${escapeHtml(char.name)}</span>
-        </button>
+          <button class="char-detail-btn" type="button" data-char-detail="${escapeHtml(char.key)}">详情</button>
+        </div>
       `;
     }).join('');
     const createBtn = $('createBtn');
@@ -182,9 +184,22 @@
 
   function bindStaticEvents() {
     $('charPicker').addEventListener('click', (event) => {
-      const button = event.target.closest('[data-char]');
-      if (!button || button.disabled) return;
-      openPickCharacterCard(button.dataset.char);
+      const detail = event.target.closest('[data-char-detail]');
+      if (detail) {
+        openPickCharacterCard(detail.dataset.charDetail);
+        return;
+      }
+      const choice = event.target.closest('[data-char-select]');
+      if (!choice || choice.classList.contains('taken')) return;
+      selectCharacter(choice.dataset.charSelect);
+    });
+    $('charPicker').addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.target.closest('[data-char-detail]')) return;
+      const choice = event.target.closest('[data-char-select]');
+      if (!choice || choice.classList.contains('taken')) return;
+      event.preventDefault();
+      selectCharacter(choice.dataset.charSelect);
     });
 
     $('createBtn').addEventListener('click', createRoom);

@@ -7,7 +7,7 @@ const CHARACTERS = [
     avatar: '/assets/avatars/yunshuimu.webp?v=beige2',
     cardImage: '/assets/characters/yunshuimu.jpg',
     gender: 'male',
-    country: '中国台北',
+    country: '中华台北',
     language: '中文',
     color: '#86e3f2',
     homeTile: null,

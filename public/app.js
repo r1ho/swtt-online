@@ -184,7 +184,7 @@
     $('charPicker').addEventListener('click', (event) => {
       const button = event.target.closest('[data-char]');
       if (!button || button.disabled) return;
-      selectCharacter(button.dataset.char);
+      openPickCharacterCard(button.dataset.char);
     });
 
     $('createBtn').addEventListener('click', createRoom);
@@ -1187,14 +1187,9 @@
     const trophyNames = trophyLeader
       ? trophyRows.filter((row) => (row.trophies || 0) === (trophyLeader.trophies || 0)).map((row) => row.name)
       : [];
-    if (pointLeader || trophyLeader) {
-      const parts = [];
-      if (pointNames.length) parts.push(`积分榜第一：${pointNames.join('、')}`);
-      if (trophyNames.length) parts.push(`奖牌榜第一：${trophyNames.join('、')}`);
-      $('endTitle').textContent = parts.join(' · ');
-    } else {
-      $('endTitle').textContent = '比赛结束';
-    }
+    const pointLabel = pointNames.length ? pointNames.join('、') : '—';
+    const trophyLabel = trophyNames.length ? trophyNames.join('、') : '—';
+    $('endTitle').textContent = `🎉积分世一${pointLabel}🎉\n🏆奖杯榜一${trophyLabel}🏆`;
 
     $('pointsRankList').innerHTML = pointsRows.map((row) => `
       <div class="rank-row${row.rank === 1 ? ' first' : ''}" title="现有积分 ${formatPoints(row.points)}">
@@ -1312,6 +1307,27 @@
         app.socket.emit('game:item', { uid });
       });
     }
+  }
+
+  function openPickCharacterCard(charKey) {
+    const character = app.config?.characters?.find((c) => c.key === charKey);
+    if (!character) return;
+    const taken = app.taken.has(charKey);
+    const abilityLines = (character.ability || []).map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+    openModal(`
+      <div class="modal-title">${escapeHtml(character.name)} · 角色卡</div>
+      <img class="character-card-image" src="${escapeHtml(character.cardImage || character.avatar)}" alt="${escapeHtml(character.name)} 角色卡">
+      ${abilityLines ? `<ul class="character-ability-list">${abilityLines}</ul>` : ''}
+      <div class="modal-actions">
+        <button class="ghost-btn" data-close-modal type="button">返回</button>
+        <button class="primary-btn" id="pickCharacterBtn" type="button" ${taken ? 'disabled' : ''}>选定</button>
+      </div>
+    `);
+    $('pickCharacterBtn').addEventListener('click', () => {
+      if (taken) return;
+      selectCharacter(charKey);
+      closeModal();
+    });
   }
 
   function openCharacterCard(charKey) {

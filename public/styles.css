@@ -1377,6 +1377,8 @@ button:disabled {
   font-size: 32px;
   color: var(--gold);
   text-shadow: 0 3px 0 rgba(0, 0, 0, 0.28);
+  white-space: pre-line;
+  line-height: 1.28;
 }
 
 .rank-list {

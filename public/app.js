@@ -27,11 +27,23 @@
     bannerTimer: null,
     feedRendered: '',
     rejoining: false,
+    rejoinTimer: null,
+    rejoinAttempt: 0,
     modalLocked: false,
     initialized: false,
   };
 
   const cardByKey = new Map();
+  const CHARACTER_PICK_ORDER = [
+    'zhangbenzhiyao',
+    'zhangbenmeiyao',
+    'aolikeyou',
+    'feilikeyou',
+    'yunshuimu',
+    'tunlusi',
+    'yuguogui',
+    'bulugui',
+  ];
 
   function loadSession() {
     try {
@@ -141,7 +153,12 @@
   function renderCharPicker() {
     const wrap = $('charPicker');
     if (!app.config) return;
-    wrap.innerHTML = app.config.characters.map((char) => {
+    const order = (char) => {
+      const index = CHARACTER_PICK_ORDER.indexOf(char.key);
+      return index < 0 ? CHARACTER_PICK_ORDER.length : index;
+    };
+    const characters = [...app.config.characters].sort((a, b) => order(a) - order(b));
+    wrap.innerHTML = characters.map((char) => {
       const taken = app.taken.has(char.key);
       const selected = app.selectedChar === char.key;
       return `
@@ -272,6 +289,10 @@
     });
 
     app.socket.on('disconnect', () => {
+      app.rejoinAttempt += 1;
+      clearTimeout(app.rejoinTimer);
+      app.rejoinTimer = null;
+      app.rejoining = false;
       if (app.state) showToast('连接暂时中断，正在重连…', 'error');
     });
   }
@@ -383,7 +404,18 @@
   function rejoinRoom() {
     if (!app.session || app.rejoining) return;
     app.rejoining = true;
+    const attempt = ++app.rejoinAttempt;
+    clearTimeout(app.rejoinTimer);
+    app.rejoinTimer = setTimeout(() => {
+      if (attempt !== app.rejoinAttempt) return;
+      app.rejoinTimer = null;
+      app.rejoining = false;
+      if (app.socket?.connected) setTimeout(rejoinRoom, 600);
+    }, 6000);
     app.socket.emit('room:rejoin', { code: app.session.code, token: app.session.token }, (result) => {
+      if (attempt !== app.rejoinAttempt) return;
+      clearTimeout(app.rejoinTimer);
+      app.rejoinTimer = null;
       app.rejoining = false;
       if (!result?.ok) {
         const message = result?.error || '';

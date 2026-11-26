@@ -100,6 +100,9 @@ function getSocketRoom(socket) {
   if (!player || player.token !== socket.data.token) {
     throw new GameError('座位信息已失效');
   }
+  if (player.socketId !== socket.id) {
+    throw new GameError('你的座位已在其他窗口重新连接');
+  }
   return { room, player };
 }
 
@@ -107,6 +110,7 @@ function bindSocket(socket, room, player) {
   socket.data.code = room.code;
   socket.data.playerId = player.id;
   socket.data.token = player.token;
+  player.socketId = socket.id;
   socket.join(room.code);
 }
 
@@ -209,6 +213,10 @@ io.on('connection', (socket) => {
       if (player._disconnectTimer) {
         clearTimeout(player._disconnectTimer);
         player._disconnectTimer = null;
+      }
+      if (player._hostTimer) {
+        clearTimeout(player._hostTimer);
+        player._hostTimer = null;
       }
       room.log(`${player.name} 重新连接`, 'system');
       room.broadcast();
@@ -353,6 +361,9 @@ io.on('connection', (socket) => {
     if (!room) return;
     const player = room.playerById(playerId);
     if (!player) return;
+    // 重连后旧 socket 的 disconnect 可能晚到，不能把新连接标成离线
+    if (player.socketId && player.socketId !== socket.id) return;
+    player.socketId = null;
     player.online = false;
     room.log(`${player.name} 暂时离线`, 'system');
     room.broadcast();

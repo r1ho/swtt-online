@@ -1250,6 +1250,7 @@
         <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
         <div class="rank-name">
           ${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}
+          ${row.negative ? '<span class="rank-debt-badge">大负翁</span>' : ''}
         </div>
         <div class="rank-score">
           <strong>${formatPoints(row.points)}</strong>
@@ -1268,6 +1269,7 @@
           <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
           <div class="rank-name">
             ${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}
+            ${row.negative ? '<span class="rank-debt-badge">大负翁</span>' : ''}
             <span class="rank-trophy-names">${names || '暂无奖杯'}</span>
           </div>
           <div class="rank-score">

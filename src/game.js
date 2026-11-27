@@ -885,6 +885,7 @@ class Room {
       name: player.name,
       avatar: player.avatar,
       points: player.points,
+      negative: player.points < 0,
       trophies: this.trophyUnits(player),
       trophyNames: this.trophyNames(player),
       eliminated: player.eliminated,
@@ -916,8 +917,31 @@ class Room {
     return this.pointsRankings();
   }
 
+  settleLoansAtSettlement() {
+    for (const loan of this.loans) {
+      if (loan.status !== 'active') continue;
+      const borrower = this.playerById(loan.borrowerId);
+      const lender = this.playerById(loan.lenderId);
+      if (!borrower || !lender || borrower.eliminated || lender.eliminated) {
+        loan.status = 'defaulted';
+        continue;
+      }
+      const total = Math.ceil(loan.principal * (1 + loan.interest / 100));
+      borrower.points -= total;
+      lender.points += total;
+      loan.status = 'closed';
+      loan.paid = total;
+      this.log(
+        `结算强制归还：${borrower.name} 向 ${lender.name} 归还 ${total} 积分`,
+        'transfer',
+        borrower.id
+      );
+    }
+  }
+
   finish(winnerIds, reason = '结算') {
     if (this.status === 'ended') return;
+    this.settleLoansAtSettlement();
     this.status = 'ended';
     this.phase = 'ended';
     this.pending = null;
@@ -936,6 +960,7 @@ class Room {
   finishByHost(playerId) {
     if (playerId !== this.hostId) throw new GameError('只有房主可以结算');
     if (this.status !== 'playing') throw new GameError('游戏未在进行中');
+    this.settleLoansAtSettlement();
     const ranked = this.pointsRankings();
     const top = ranked.length ? ranked[0].points : 0;
     const winners = ranked.filter((r) => r.points === top).map((r) => r.id);

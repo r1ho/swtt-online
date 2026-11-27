@@ -1501,6 +1501,20 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.rank-debt-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(109, 182, 255, 0.42);
+  background: rgba(109, 182, 255, 0.16);
+  color: #d7ecff;
+  font-size: 8px;
+  font-weight: 800;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
 .trophy-rank-list .rank-row {
   align-items: start;
 }

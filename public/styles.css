@@ -364,6 +364,12 @@ button:disabled {
   gap: 9px;
 }
 
+.spectate-btn {
+  width: 100%;
+  margin-top: 8px;
+  text-align: center;
+}
+
 .code-input {
   width: 100%;
   border-radius: 999px;

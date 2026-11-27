@@ -76,6 +76,8 @@ app.get('/api/rooms/:code', (req, res) => {
     status: room.status,
     playerCount: room.players.length,
     onlineCount: room.players.filter((p) => p.online).length,
+    spectatorCount: room.spectators.length,
+    spectatorLimit: 5,
     maxPlayers: MAX_PLAYERS,
     availableCharacters: room.availableCharacters(),
     hostName: room.playerById(room.hostId)?.name || '',
@@ -120,13 +122,39 @@ function bindSocket(socket, room, player) {
   socket.join(room.code);
 }
 
+function bindSpectatorSocket(socket, room, spectator) {
+  socket.data.code = room.code;
+  socket.data.spectatorId = spectator.id;
+  socket.data.token = spectator.token;
+  spectator.socketId = socket.id;
+  socket.join(room.code);
+}
+
+function getSocketSpectator(socket) {
+  const code = socket.data.code;
+  if (!code) throw new GameError('你还没有加入房间');
+  const room = rooms.get(code);
+  if (!room) throw new GameError('房间已关闭');
+  const spectator = room.spectatorById(socket.data.spectatorId);
+  if (!spectator || spectator.token !== socket.data.token) {
+    throw new GameError('观战信息已失效');
+  }
+  if (spectator.socketId !== socket.id) {
+    throw new GameError('你的观战席位已在其他窗口重新连接');
+  }
+  return { room, spectator };
+}
+
 function scheduleRoomCleanup(room) {
   if (cleanupTimers.has(room.code)) return;
   const timer = setTimeout(() => {
     cleanupTimers.delete(room.code);
     const current = rooms.get(room.code);
     if (!current) return;
-    if (current.players.every((p) => !p.online)) {
+    if (
+      current.players.every((p) => !p.online) &&
+      current.spectators.every((s) => !s.online)
+    ) {
       rooms.delete(room.code);
       io.to(room.code).emit('room:closed');
     }
@@ -185,11 +213,26 @@ io.on('connection', (socket) => {
   socket.on('room:join', (payload, ack) => {
     try {
       const code = normalizeCode(payload?.code);
-      const character = CHARACTERS.find((c) => c.key === payload?.charKey);
-      if (!code || !character) throw new GameError('请填写房间码并选择角色');
       const room = rooms.get(code);
       if (!room) throw new GameError('房间不存在');
-      if (room.status !== 'waiting') throw new GameError('游戏已经开始');
+      const wantsSpectate = Boolean(payload?.spectate) || room.status !== 'waiting';
+      if (wantsSpectate) {
+        const spectator = room.addSpectator();
+        clearRoomCleanup(code);
+        bindSpectatorSocket(socket, room, spectator);
+        room.broadcast();
+        ack?.({
+          ok: true,
+          spectator: true,
+          code,
+          spectatorId: spectator.id,
+          token: spectator.token,
+          state: room.publicState(),
+        });
+        return;
+      }
+      const character = CHARACTERS.find((c) => c.key === payload?.charKey);
+      if (!character) throw new GameError('请填写房间码并选择角色');
       const player = room.addPlayer(character);
       clearRoomCleanup(code);
       bindSocket(socket, room, player);
@@ -212,6 +255,27 @@ io.on('connection', (socket) => {
       const code = normalizeCode(payload?.code);
       const room = rooms.get(code);
       if (!room) throw new GameError('房间已关闭');
+      const spectator = room.spectatorByToken(payload?.token);
+      if (spectator) {
+        clearRoomCleanup(code);
+        bindSpectatorSocket(socket, room, spectator);
+        spectator.online = true;
+        if (spectator._disconnectTimer) {
+          clearTimeout(spectator._disconnectTimer);
+          spectator._disconnectTimer = null;
+        }
+        room.log(`${spectator.name} 重新连接观战`, 'system');
+        room.broadcast();
+        ack?.({
+          ok: true,
+          spectator: true,
+          code,
+          spectatorId: spectator.id,
+          token: spectator.token,
+          state: room.publicState(),
+        });
+        return;
+      }
       const player = room.restorePlayer(payload?.token);
       clearRoomCleanup(code);
       bindSocket(socket, room, player);
@@ -241,6 +305,11 @@ io.on('connection', (socket) => {
 
   socket.on('room:state', () => {
     try {
+      if (socket.data.spectatorId) {
+        const { room } = getSocketSpectator(socket);
+        socket.emit('room:state', room.publicState());
+        return;
+      }
       const { room } = getSocketRoom(socket);
       socket.emit('room:state', room.publicState());
     } catch (error) {
@@ -249,6 +318,23 @@ io.on('connection', (socket) => {
   });
 
   socket.on('room:leave', () => {
+    if (socket.data.spectatorId) {
+      const code = socket.data.code;
+      const room = rooms.get(code);
+      if (room) {
+        room.removeSpectator(socket.data.spectatorId);
+        room.broadcast();
+        if (room.players.every((p) => !p.online) && room.spectators.every((s) => !s.online)) {
+          scheduleRoomCleanup(room);
+        }
+      }
+      socket.leave(code);
+      socket.data.code = null;
+      socket.data.spectatorId = null;
+      socket.data.token = null;
+      socket.emit('room:left');
+      return;
+    }
     try {
       const { room, player } = getSocketRoom(socket);
       const code = room.code;
@@ -260,7 +346,10 @@ io.on('connection', (socket) => {
       if (room.players.length === 0) {
         rooms.delete(code);
         clearRoomCleanup(code);
-      } else if (room.players.every((p) => !p.online)) {
+      } else if (
+        room.players.every((p) => !p.online) &&
+        room.spectators.every((s) => !s.online)
+      ) {
         scheduleRoomCleanup(room);
       }
       socket.emit('room:left');
@@ -317,7 +406,7 @@ io.on('connection', (socket) => {
   socket.on('game:blade', (payload) => {
     try {
       const { room, player } = getSocketRoom(socket);
-      room.challengeBlade(player.id, payload?.targetId).catch((error) => sendError(socket, error));
+      room.challengeBlade(player.id, payload?.targetId, payload?.amount).catch((error) => sendError(socket, error));
     } catch (error) {
       sendError(socket, error);
     }
@@ -361,6 +450,33 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     const code = socket.data.code;
+    const spectatorId = socket.data.spectatorId;
+    if (code && spectatorId) {
+      const room = rooms.get(code);
+      if (!room) return;
+      const spectator = room.spectatorById(spectatorId);
+      if (!spectator) return;
+      if (spectator.socketId && spectator.socketId !== socket.id) return;
+      spectator.socketId = null;
+      spectator.online = false;
+      room.broadcast();
+      if (spectator._disconnectTimer) clearTimeout(spectator._disconnectTimer);
+      spectator._disconnectTimer = setTimeout(() => {
+        spectator._disconnectTimer = null;
+        if (!spectator.online) {
+          room.removeSpectator(spectator.id);
+          room.broadcast();
+          if (room.players.every((p) => !p.online) && room.spectators.every((s) => !s.online)) {
+            scheduleRoomCleanup(room);
+          }
+        }
+      }, 60 * 1000);
+      spectator._disconnectTimer.unref?.();
+      if (room.players.every((p) => !p.online) && room.spectators.every((s) => !s.online)) {
+        scheduleRoomCleanup(room);
+      }
+      return;
+    }
     const playerId = socket.data.playerId;
     if (!code || !playerId) return;
     const room = rooms.get(code);
@@ -399,7 +515,10 @@ io.on('connection', (socket) => {
       player._hostTimer.unref?.();
     }
 
-    if (room.players.every((p) => !p.online)) {
+    if (
+      room.players.every((p) => !p.online) &&
+      room.spectators.every((s) => !s.online)
+    ) {
       scheduleRoomCleanup(room);
     }
   });

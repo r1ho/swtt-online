@@ -203,7 +203,8 @@
     });
 
     $('createBtn').addEventListener('click', createRoom);
-    $('joinBtn').addEventListener('click', joinRoom);
+    $('joinBtn').addEventListener('click', () => joinRoom(false));
+    $('spectateBtn').addEventListener('click', () => joinRoom(true));
 
     const codeInput = $('joinCodeInput');
     codeInput.addEventListener('input', () => {
@@ -323,6 +324,8 @@
         app.roomInfo = null;
         app.taken = new Set();
         setJoinHint('房间不存在');
+        $('joinBtn').disabled = true;
+        $('spectateBtn').disabled = true;
         renderCharPicker();
         return;
       }
@@ -340,14 +343,27 @@
       }
       renderCharPicker();
 
+      const spectatorFull = info.spectatorCount >= info.spectatorLimit;
+      $('spectateBtn').disabled = spectatorFull;
       if (info.status !== 'waiting') {
-        setJoinHint('游戏已开始');
-        $('joinBtn').disabled = true;
+        $('joinBtn').textContent = '进入观战';
+        $('joinBtn').disabled = spectatorFull;
+        setJoinHint(
+          spectatorFull
+            ? '观战位已满'
+            : `游戏已开始 · 观战 ${info.spectatorCount}/${info.spectatorLimit}`
+        );
       } else if (info.playerCount >= info.maxPlayers) {
-        setJoinHint('房间已满');
+        $('joinBtn').textContent = '加入房间';
         $('joinBtn').disabled = true;
+        setJoinHint(spectatorFull ? '玩家和观战位均已满' : '玩家已满，可点击“仅观战”');
       } else {
-        setJoinHint(`${info.code} · ${info.playerCount}/${info.maxPlayers}`);
+        $('joinBtn').textContent = '加入房间';
+        setJoinHint(
+          spectatorFull
+            ? `${info.code} · ${info.playerCount}/${info.maxPlayers} · 观战位已满`
+            : `${info.code} · ${info.playerCount}/${info.maxPlayers} · 观战 ${info.spectatorCount}/${info.spectatorLimit}`
+        );
         $('joinBtn').disabled = !app.selectedChar;
       }
     } catch {
@@ -388,19 +404,24 @@
     });
   }
 
-  async function joinRoom() {
+  async function joinRoom(spectate = false) {
     const code = $('joinCodeInput').value.trim().toUpperCase();
     if (code.length !== 4) {
       showToast('请输入 4 位房间码', 'error');
       return;
     }
-    if (!app.selectedChar) {
+    const spectateMode = Boolean(spectate) || app.roomInfo?.status !== 'waiting';
+    if (!spectateMode && !app.selectedChar) {
       showToast('请先选择角色', 'error');
       return;
     }
     const button = $('joinBtn');
     button.disabled = true;
-    app.socket.emit('room:join', { code, charKey: app.selectedChar }, (result) => {
+    app.socket.emit('room:join', {
+      code,
+      charKey: spectateMode ? null : app.selectedChar,
+      spectate: spectateMode,
+    }, (result) => {
       button.disabled = false;
       if (!result?.ok) {
         showToast(result?.error || '加入失败', 'error');
@@ -410,7 +431,9 @@
       saveSession({
         code: result.code,
         token: result.token,
-        playerId: result.playerId,
+        playerId: result.playerId || null,
+        spectator: Boolean(result.spectator),
+        spectatorId: result.spectatorId || null,
       });
       applyState(result.state);
     });
@@ -442,7 +465,9 @@
       saveSession({
         code: result.code,
         token: result.token,
-        playerId: result.playerId,
+        playerId: result.playerId || null,
+        spectator: Boolean(result.spectator),
+        spectatorId: result.spectatorId || null,
       });
       applyState(result.state);
     });
@@ -451,13 +476,13 @@
   function applyState(state) {
     if (!state) return;
     const me = state.players.find((player) => player.id === app.session?.playerId);
-    if (!me) {
+    if (!me && !app.session?.spectator) {
       forgetSession();
       clearToLanding();
       return;
     }
     const firstState = app.state === null;
-    app.meId = me.id;
+    app.meId = me?.id || null;
     app.state = state;
     if (firstState && state.lastMove?.seq) app.seenMoveSeq = state.lastMove.seq;
     if (firstState && state.lastDice?.seq) app.seenDiceSeq = state.lastDice.seq;
@@ -541,6 +566,7 @@
 
     const onlineCount = state.players.filter((player) => player.online).length;
     const isHost = me?.isHost;
+    const isSpectator = Boolean(app.session?.spectator);
     const startBtn = $('startBtn');
     if (isHost) {
       startBtn.classList.remove('hidden');
@@ -548,6 +574,9 @@
       startBtn.textContent = '开始游戏';
       $('lobbyStatus').textContent =
         onlineCount < 2 ? '至少需要 2 名在线玩家' : `${onlineCount}/${app.config.maxPlayers} 在线`;
+    } else if (isSpectator) {
+      startBtn.classList.add('hidden');
+      $('lobbyStatus').textContent = `观战中 · ${state.spectators?.length || 0}/5`;
     } else {
       startBtn.classList.add('hidden');
       $('lobbyStatus').textContent = '等待房主开始';
@@ -870,6 +899,8 @@
       hint.textContent = '该玩家暂时离线';
     } else if (current.id !== app.meId) {
       hint.textContent = '等待对方行动';
+    } else if (state.phase === 'startRoll') {
+      hint.textContent = '定先手中，等待掷骰';
     } else if (state.phase === 'awaitRoll') {
       hint.textContent = '点击骰子前进';
     } else if (state.phase === 'action') {
@@ -938,6 +969,10 @@
     }
     if (state.phase === 'skipped') {
       wrap.innerHTML = '<span class="dock-note">本回合暂停</span>';
+      return;
+    }
+    if (state.phase === 'startRoll') {
+      wrap.innerHTML = '<span class="dock-note">定先手中…</span>';
       return;
     }
     wrap.innerHTML = '<span class="dock-note">结算中…</span>';
@@ -1468,7 +1503,9 @@
     }
     confirmDialog(
       '离开房间',
-      app.state.status === 'playing' ? '离开后本局视为退出比赛。' : '确定要离开房间吗？',
+      app.session?.spectator
+        ? '确定要离开观战吗？'
+        : app.state.status === 'playing' ? '离开后本局视为退出比赛。' : '确定要离开房间吗？',
       '离开',
       leaveRoom
     );
@@ -1608,7 +1645,11 @@
     }
     openModal(`
       <div class="modal-title">拼刺刀</div>
-      <div class="modal-message">双方各掷一次骰子，点数小者支付点数大者 300 积分。需要对方同意。</div>
+      <div class="modal-message">双方各掷一次骰子，点数小者支付点数大者以下积分。需要对方同意。</div>
+      <div class="form-field">
+        <label for="bladeStake">拼刺刀积分（0-2000，整百）</label>
+        <input id="bladeStake" type="number" min="0" max="2000" step="100" value="300">
+      </div>
       <div class="pending-options" id="bladeTargets">
         ${targets.map((player) => `
           <button type="button" class="option-btn" data-blade-target="${escapeHtml(player.id)}">
@@ -1626,9 +1667,14 @@
     $('bladeTargets').addEventListener('click', (event) => {
       const button = event.target.closest('[data-blade-target]');
       if (!button) return;
+      const amount = Number($('bladeStake').value);
+      if (!Number.isInteger(amount) || amount < 0 || amount > 2000 || amount % 100 !== 0) {
+        showToast('拼刺刀积分需为 0-2000 的整百数', 'error');
+        return;
+      }
       const targetId = button.dataset.bladeTarget;
       closeModal();
-      app.socket.emit('game:blade', { targetId });
+      app.socket.emit('game:blade', { targetId, amount });
     });
   }
 

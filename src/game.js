@@ -482,7 +482,6 @@ class Room {
     this.bladeUsed = false;
     this.broadcast();
 
-    const pointsBeforeRoll = player.points;
     let value = this.rollDie(player, '移动', { movement: true });
     let rerolls = 0;
     while (
@@ -503,10 +502,6 @@ class Room {
     }
     this.log(`${player.name} 掷出了 ${value} 点`, 'roll', playerId);
     this.broadcast();
-    const passiveGain = player.points - pointsBeforeRoll;
-    if (passiveGain > 0) {
-      await this.announceDice(player, '移动', `你掷出 ${value} 点；蛰伏积分 +${passiveGain}。`);
-    }
     await sleep(420);
 
     const from = player.pos;
@@ -1050,13 +1045,11 @@ class Room {
       const value = await this.rollEffect(player, '乒超');
       if (value === 6) {
         player.effects.pingshu = false;
-        this.effectLog(player, '乒超', '掷出 6，水平过高不允许参赛，此卡不再生效', 'loss');
-        await this.announceDice(player, '乒超', '你掷出 6 点，乒超卡牌不再生效，积分不变。');
+        this.effectLog(player, '乒超', '掷出 6，水平过高不允许参赛，此卡不再生效，积分不变', 'loss');
       } else {
         const gain = value * 10;
         player.points += gain;
         this.effectLog(player, '乒超', `掷出 ${value}，积分 +${gain}`, 'gain');
-        await this.announceDice(player, '乒超', `你掷出 ${value} 点，积分 +${gain}。`);
       }
       this.broadcast();
     }
@@ -1067,7 +1060,6 @@ class Room {
       const gain = value * 100;
       player.points += gain;
       this.effectLog(player, '掷骰加分', `${tile.short} 掷出 ${value}，积分 +${gain}`, 'gain');
-      await this.announceDice(player, tile.short, `你掷出 ${value} 点，积分 +${gain}。`);
       this.broadcast();
     }
 
@@ -1342,16 +1334,6 @@ class Room {
     return value;
   }
 
-  async announceDice(player, title, message) {
-    if (this.status !== 'playing' || player.eliminated) return;
-    await this.ask(player.id, {
-      type: 'diceResult',
-      title: `${title} · 掷骰结果`,
-      message,
-      options: [{ value: 'ok', label: '确定', tone: 'primary' }],
-    });
-  }
-
   drawFromDeck(deckKey) {
     const cards = CARDS[deckKey];
     if (!this.decks[deckKey] || this.decks[deckKey].length === 0) {
@@ -1620,10 +1602,9 @@ class Room {
         const value = await this.rollEffect(p, 'TTR');
         if (value <= 3) {
           gain(200, `掷出 ${value}`);
-          await this.announceDice(p, 'TTR', `你掷出 ${value} 点，积分 +200。`);
         } else {
           await pay(200, `TTR 掷出 ${value}`);
-          await this.announceDice(p, 'TTR', `你掷出 ${value} 点，积分 -200。`);
+          if (!p.eliminated) this.effectLog(p, 'TTR', `掷出 ${value}，积分 -200`, 'loss');
         }
         break;
       }
@@ -1657,10 +1638,9 @@ class Room {
         const value = await this.rollEffect(p, '器宗');
         if (value % 2 === 1) {
           gain(200, `掷出奇数 ${value}`);
-          await this.announceDice(p, '器宗', `你掷出 ${value} 点（奇数），积分 +200。`);
         } else {
           await pay(200, `器宗掷出偶数 ${value}`);
-          await this.announceDice(p, '器宗', `你掷出 ${value} 点（偶数），积分 -200。`);
+          if (!p.eliminated) this.effectLog(p, '器宗', `掷出偶数 ${value}，积分 -200`, 'loss');
         }
         break;
       }
@@ -1699,7 +1679,6 @@ class Room {
         if (value >= 4) {
           target.points += 200;
           this.effectLog(p, '抽签嘉宾', `${target.name} 掷出 ${value}，积分 +200`, 'gain');
-          await this.announceDice(target, '抽签嘉宾', `你掷出 ${value} 点，积分 +200。`);
         } else {
           const paid = await this.charge(target, 200, {
             reason: '抽签嘉宾',
@@ -1715,7 +1694,6 @@ class Room {
               : `${target.name} 未能支付，退出世排`,
             'loss'
           );
-          await this.announceDice(target, '抽签嘉宾', `你掷出 ${value} 点，积分 -${paid}。`);
         }
         break;
       }
@@ -1745,10 +1723,9 @@ class Room {
         const value = await this.rollEffect(p, '赶飞机');
         if (value >= 3) {
           gain(200, `掷出 ${value}`);
-          await this.announceDice(p, '赶飞机', `你掷出 ${value} 点，积分 +200。`);
         } else {
           await pay(200, `赶飞机掷出 ${value}`);
-          await this.announceDice(p, '赶飞机', `你掷出 ${value} 点，积分 -200。`);
+          if (!p.eliminated) this.effectLog(p, '赶飞机', `掷出 ${value}，积分 -200`, 'loss');
         }
         break;
       }
@@ -1765,10 +1742,8 @@ class Room {
         const value = await this.rollEffect(p, '发难财');
         if (value >= 5) {
           gain(1000, `掷出 ${value}`);
-          await this.announceDice(p, '发难财', `你掷出 ${value} 点，达到 5，积分 +1000。`);
         } else {
-          this.effectLog(p, '发难财', `掷出 ${value}，未达到 5`, 'info');
-          await this.announceDice(p, '发难财', `你掷出 ${value} 点，未达到 5，积分不变。`);
+          this.effectLog(p, '发难财', `掷出 ${value}，未达到 5，积分不变`, 'info');
         }
         break;
       }
@@ -1829,12 +1804,8 @@ class Room {
           p.points += 500;
           target.points += 500;
           this.effectLog(p, '组双打', `双方都掷出 ${a}，各 +500 积分`, 'gain');
-          await this.announceDice(p, '组双打', `你掷出 ${a} 点，${target.name} 掷出 ${b} 点；点数相同，双方各 +500。`);
-          await this.announceDice(target, '组双打', `你掷出 ${b} 点，${p.name} 掷出 ${a} 点；点数相同，双方各 +500。`);
         } else {
-          this.effectLog(p, '组双打', `你掷出 ${a}，${target.name} 掷出 ${b}，点数不同`, 'info');
-          await this.announceDice(p, '组双打', `你掷出 ${a} 点，${target.name} 掷出 ${b} 点；点数不同，积分不变。`);
-          await this.announceDice(target, '组双打', `你掷出 ${b} 点，${p.name} 掷出 ${a} 点；点数不同，积分不变。`);
+          this.effectLog(p, '组双打', `你掷出 ${a}，${target.name} 掷出 ${b}，点数不同，积分不变`, 'info');
         }
         break;
       }
@@ -2151,7 +2122,6 @@ class Room {
       this.bladeUsed = true;
       const a = await this.rollEffect(player, '拼刺刀');
       const b = await this.rollEffect(target, '拼刺刀');
-      let outcome;
       if (a > b) {
         await this.charge(target, stake, {
           reason: '拼刺刀',
@@ -2159,7 +2129,6 @@ class Room {
           allowFanshen: false,
         });
         this.effectLog(player, '拼刺刀', `${player.name} ${a} 点胜 ${target.name} ${b} 点，赢得 ${stake} 积分`, 'gain');
-        outcome = `${player.name} 赢得 ${stake} 积分`;
       } else if (b > a) {
         await this.charge(player, stake, {
           reason: '拼刺刀',
@@ -2167,25 +2136,8 @@ class Room {
           allowFanshen: false,
         });
         this.effectLog(player, '拼刺刀', `${target.name} ${b} 点胜 ${player.name} ${a} 点，获得 ${stake} 积分`, 'loss');
-        outcome = `${target.name} 赢得 ${stake} 积分`;
       } else {
-        this.effectLog(player, '拼刺刀', `双方都掷出 ${a} 点，平局，赌注 ${stake}`, 'info');
-        outcome = '平局，积分不变';
-      }
-      const watcher = !player.eliminated ? player : (!target.eliminated ? target : null);
-      if (watcher) {
-        await this.announceDice(
-          watcher,
-          '拼刺刀',
-          `${player.name} 掷出 ${a} 点，${target.name} 掷出 ${b} 点；${outcome}。`
-        );
-      }
-      if (!target.eliminated && target.id !== watcher?.id) {
-        await this.announceDice(
-          target,
-          '拼刺刀',
-          `${player.name} 掷出 ${a} 点，${target.name} 掷出 ${b} 点；${outcome}。`
-        );
+        this.effectLog(player, '拼刺刀', `双方都掷出 ${a} 点，平局，赌注 ${stake}，积分不变`, 'info');
       }
       this.phase = 'action';
       this.broadcast();

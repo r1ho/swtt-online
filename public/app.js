@@ -520,7 +520,10 @@
         slots.push(`
           <div class="seat filled ${player.online ? '' : 'offline'}" data-card-key="${escapeHtml(player.charKey)}" title="查看角色卡">
             ${player.online ? '' : '<span class="seat-offline">离线</span>'}
-            <img src="${escapeHtml(player.avatar)}" alt="${escapeHtml(player.name)}" draggable="false">
+            <div class="seat-avatar-wrap">
+              <img src="${escapeHtml(player.avatar)}" alt="${escapeHtml(player.name)}" draggable="false">
+              ${player.id === app.meId ? '<span class="seat-you">你</span>' : ''}
+            </div>
             <span class="seat-name">${escapeHtml(player.name)}</span>
             <span class="seat-tag">${player.isHost ? '房主' : '选手'}</span>
           </div>

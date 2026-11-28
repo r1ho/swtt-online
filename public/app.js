@@ -844,11 +844,21 @@
   function ownerDotPosition(tile) {
     let x = tile.x;
     let y = tile.y;
-    if (tile.id >= 1 && tile.id <= 10) y -= 11.5;
-    else if (tile.id >= 19 && tile.id <= 28) y += 7.5;
-    else if (tile.id >= 12 && tile.id <= 17) x += 3.5;
-    else if (tile.id >= 30 && tile.id <= 35) x -= 3.5;
-    return { x, y };
+    let side = 'top';
+    if (tile.id >= 1 && tile.id <= 10) {
+      y = 2.2;
+      side = 'top';
+    } else if (tile.id >= 19 && tile.id <= 28) {
+      y = 97.8;
+      side = 'bottom';
+    } else if (tile.id >= 12 && tile.id <= 17) {
+      x = 97.5;
+      side = 'right';
+    } else if (tile.id >= 30 && tile.id <= 35) {
+      x = 2.5;
+      side = 'left';
+    }
+    return { x, y, side };
   }
 
   function renderOwnerDots() {
@@ -866,7 +876,7 @@
         const position = ownerDotPosition(tile);
         const color = OWNER_DOT_COLORS[player.charKey] || player.color || '#fff';
         dots.push(`
-          <span class="owner-dot-wrap" style="left:${position.x}%;top:${position.y}%"
+          <span class="owner-dot-wrap side-${position.side}" style="left:${position.x}%;top:${position.y}%"
                 title="${escapeHtml(player.name)} · ${count} 个奖杯">
             ${Array.from({ length: count }, () => `<i class="owner-dot" style="background:${color}"></i>`).join('')}
           </span>

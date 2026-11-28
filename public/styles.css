@@ -704,6 +704,12 @@ button:disabled {
   transform: translate(-50%, -50%);
 }
 
+.owner-dot-wrap.side-bottom,
+.owner-dot-wrap.side-left,
+.owner-dot-wrap.side-right {
+  flex-direction: column;
+}
+
 .owner-dot {
   display: block;
   width: clamp(4px, 0.55vw, 7px);

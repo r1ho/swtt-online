@@ -23,6 +23,7 @@
     pendingId: null,
     pendingSubmitting: false,
     hiddenPendingId: null,
+    dismissedCardPendingId: null,
     divineMinimized: false,
     bannerTimer: null,
     feedRendered: '',
@@ -1129,6 +1130,7 @@
       backdrop.classList.add('hidden');
       app.pendingId = null;
       app.hiddenPendingId = null;
+      app.dismissedCardPendingId = null;
       app.pendingSubmitting = false;
       updateResumeAction();
       return;
@@ -1140,6 +1142,13 @@
     const mine = pending.playerId === app.meId;
     const isPublicCard = pending.type === 'card'
       && ['chance', 'fate'].includes(pending.meta?.deck);
+    if (!mine && isPublicCard && app.dismissedCardPendingId === pending.id) {
+      backdrop.classList.add('hidden');
+      app.pendingId = pending.id;
+      app.pendingSubmitting = false;
+      updateResumeAction();
+      return;
+    }
     if (mine && ['roll', 'number', 'target'].includes(pending.type) && app.hiddenPendingId === pending.id) {
       backdrop.classList.add('hidden');
       app.pendingId = pending.id;
@@ -1170,8 +1179,17 @@
         <div class="pending-message">${escapeHtml(pending.message || '')}</div>
         ${image}
         <div class="pending-watch">等待 ${escapeHtml(owner?.name || '玩家')} 关闭卡牌…</div>
+        <div class="pending-watch-actions">
+          <button class="ghost-btn" id="pendingViewerClose" type="button">关闭</button>
+        </div>
       `;
       backdrop.classList.remove('hidden');
+      $('pendingViewerClose').addEventListener('click', () => {
+        app.dismissedCardPendingId = pending.id;
+        app.pendingId = pending.id;
+        backdrop.classList.add('hidden');
+        updateResumeAction();
+      });
       return;
     }
 

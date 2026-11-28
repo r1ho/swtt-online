@@ -1822,6 +1822,16 @@ button:disabled {
   font-weight: 700;
 }
 
+.pending-watch-actions {
+  margin-top: 10px;
+}
+
+.pending-watch-actions .ghost-btn {
+  width: 100%;
+  min-height: 38px;
+  text-align: center;
+}
+
 .pending-map-btn {
   width: 100%;
   margin-top: 9px;

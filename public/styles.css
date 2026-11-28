@@ -1550,6 +1550,15 @@ button:disabled {
   font-weight: 600;
 }
 
+.rank-loan {
+  display: inline;
+  margin-left: 3px;
+  color: rgba(255, 215, 122, 0.88);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: normal;
+}
+
 .rank-trophy-names {
   display: block;
   margin-top: 3px;

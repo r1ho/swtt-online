@@ -1343,6 +1343,7 @@
         <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
         <div class="rank-name">
           ${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}
+          ${state.settlementHasLoans ? `<span class="rank-loan">（借贷 ${formatPoints(row.loanBorrowed || 0)} / 贷出 ${formatPoints(row.loanLent || 0)}）</span>` : ''}
           ${row.negative ? '<span class="rank-debt-badge">大负翁</span>' : ''}
         </div>
         <div class="rank-score">
@@ -1362,6 +1363,7 @@
           <img src="${escapeHtml(row.avatar)}" alt="${escapeHtml(row.name)}">
           <div class="rank-name">
             ${escapeHtml(row.name)}${row.eliminated ? '（退出）' : ''}
+            ${state.settlementHasLoans ? `<span class="rank-loan">（借贷 ${formatPoints(row.loanBorrowed || 0)} / 贷出 ${formatPoints(row.loanLent || 0)}）</span>` : ''}
             ${row.negative ? '<span class="rank-debt-badge">大负翁</span>' : ''}
             <span class="rank-trophy-names">${names || '暂无奖杯'}</span>
           </div>

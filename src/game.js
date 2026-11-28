@@ -366,6 +366,7 @@ class Room {
       rankings: this.status === 'ended' ? this.rankings() : null,
       pointsRankings: this.status === 'ended' ? this.pointsRankings() : null,
       trophyRankings: this.status === 'ended' ? this.trophyRankings() : null,
+      settlementHasLoans: this.loans.some((loan) => loan.settledAtSettlement),
       logs: this.logs.slice(-40),
       loans: this.loans.map((l) => ({ ...l })),
       bladeUsed: this.bladeUsed,
@@ -680,7 +681,6 @@ class Room {
       const total = Math.ceil(loan.principal * (1 + loan.interest / 100));
       const funded = await this.raiseFunds(player, total);
       if (!funded) {
-        loan.status = 'defaulted';
         this.log(`${player.name} 无力偿还 ${lender.name} 的借款`, 'danger', player.id);
         if (!player.eliminated) this.eliminate(player);
         this.checkGameEnd();
@@ -874,8 +874,28 @@ class Room {
     return !player.eliminated && player.points >= target;
   }
 
+  coverBorrowerDebtsByBank(player) {
+    for (const loan of this.loans) {
+      if (loan.status !== 'active' || loan.borrowerId !== player.id) continue;
+      const lender = this.playerById(loan.lenderId);
+      const total = Math.ceil(loan.principal * (1 + loan.interest / 100));
+      loan.status = 'closed';
+      loan.paid = total;
+      loan.settledByBank = true;
+      if (lender && !lender.eliminated) {
+        lender.points += total;
+        this.log(
+          `银行代偿：${player.name} 欠 ${lender.name} 的 ${total} 积分由银行返还`,
+          'transfer',
+          lender.id
+        );
+      }
+    }
+  }
+
   eliminate(player) {
     if (player.eliminated) return;
+    this.coverBorrowerDebtsByBank(player);
     player.eliminated = true;
     player.skipTurns = 0;
     player.effects = { pingshu: false, michelin: false, blame: false };
@@ -911,6 +931,13 @@ class Room {
   }
 
   rankingRow(player, index) {
+    const settledLoans = this.loans.filter((loan) => loan.settledAtSettlement);
+    const loanBorrowed = settledLoans
+      .filter((loan) => loan.borrowerId === player.id)
+      .reduce((sum, loan) => sum + loan.principal, 0);
+    const loanLent = settledLoans
+      .filter((loan) => loan.lenderId === player.id)
+      .reduce((sum, loan) => sum + loan.principal, 0);
     return {
       rank: index + 1,
       id: player.id,
@@ -918,6 +945,8 @@ class Room {
       avatar: player.avatar,
       points: player.points,
       negative: player.points < 0,
+      loanBorrowed,
+      loanLent,
       trophies: this.trophyUnits(player),
       trophyNames: this.trophyNames(player),
       eliminated: player.eliminated,
@@ -963,6 +992,7 @@ class Room {
       lender.points += total;
       loan.status = 'closed';
       loan.paid = total;
+      loan.settledAtSettlement = true;
       this.log(
         `结算强制归还：${borrower.name} 向 ${lender.name} 归还 ${total} 积分`,
         'transfer',
@@ -2322,6 +2352,7 @@ class Room {
     }
     if (this.status === 'playing' && !player.eliminated) {
       this.log(`${player.name} 退出了比赛`, 'danger', player.id);
+      this.coverBorrowerDebtsByBank(player);
       const wasCurrent = this.current?.id === playerId;
       const hadPending = Boolean(this.pending);
       if (wasCurrent) this.clearAutoRoll();

@@ -678,7 +678,7 @@ button:disabled {
 .board-map {
   position: absolute;
   inset: 0;
-  transform: scale(1.03);
+  transform: scale(1.02);
   transform-origin: center;
 }
 
@@ -704,7 +704,6 @@ button:disabled {
   transform: translate(-50%, -50%);
 }
 
-.owner-dot-wrap.side-bottom,
 .owner-dot-wrap.side-left,
 .owner-dot-wrap.side-right {
   flex-direction: column;

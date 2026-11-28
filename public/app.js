@@ -249,6 +249,11 @@
     $('leftStack').addEventListener('click', handlePanelClick);
     $('rightStack').addEventListener('click', handlePanelClick);
     $('lobbySeats').addEventListener('click', (event) => {
+      const kick = event.target.closest('[data-kick-player]');
+      if (kick) {
+        confirmKick(kick.dataset.kickPlayer);
+        return;
+      }
       const holder = event.target.closest('[data-card-key]');
       if (holder) openCharacterCard(holder.dataset.cardKey);
     });
@@ -301,6 +306,12 @@
     app.socket.on('room:closed', () => {
       forgetSession();
       showToast('房间已关闭', 'error');
+      clearToLanding();
+    });
+
+    app.socket.on('room:kicked', () => {
+      forgetSession();
+      showToast('你已被房主移出房间', 'error');
       clearToLanding();
     });
 
@@ -551,6 +562,9 @@
             </div>
             <span class="seat-name">${escapeHtml(player.name)}</span>
             <span class="seat-tag">${player.isHost ? '房主' : '选手'}</span>
+            ${me?.isHost && player.id !== me.id
+              ? `<button class="seat-kick" type="button" data-kick-player="${escapeHtml(player.id)}">移出</button>`
+              : ''}
           </div>
         `);
       } else {
@@ -596,6 +610,7 @@
       : null;
 
     renderSidePanels();
+    renderOwnerDots();
 
     // 位置同步 + 移动动画
     syncDisplayPositions();
@@ -646,9 +661,13 @@
   function playerPanelHtml(player) {
     const isTurn = app.state.turnPlayerId === player.id && app.state.status === 'playing';
     const isMe = player.id === app.meId;
+    const isHost = app.state.hostId === app.meId;
     const badges = [];
     if (isMe) badges.push('<span class="pp-badge mint">你</span>');
     if (player.isHost) badges.push('<span class="pp-badge">房主</span>');
+    if (isHost && !isMe && !player.eliminated) {
+      badges.push(`<button class="pp-badge kick-badge" type="button" data-kick-player="${escapeHtml(player.id)}">移出</button>`);
+    }
     if (player.skipTurns > 0) badges.push(`<span class="pp-badge red">暂停×${player.skipTurns}</span>`);
     if (player.eliminated) badges.push('<span class="pp-badge red">已退出</span>');
     if (player.charKey === 'yunshuimu' && player.points <= 2500 && !player.eliminated) {
@@ -808,6 +827,52 @@
     };
     app.animations.set(move.playerId, animation);
     animation.timer = setTimeout(step, 60);
+  }
+
+  const OWNER_DOT_COLORS = {
+    yunshuimu: '#a8e878',
+    zhangbenzhiyao: '#e5484d',
+    zhangbenmeiyao: '#ff8ec7',
+    tunlusi: '#4f9cf9',
+    aolikeyou: '#ff9b42',
+    feilikeyou: '#f4d35e',
+    bulugui: '#b58cff',
+    yuguogui: '#1f8a4c',
+  };
+
+  function ownerDotPosition(tile) {
+    let x = tile.x;
+    let y = tile.y;
+    if (tile.id >= 1 && tile.id <= 10) y -= 11.5;
+    else if (tile.id >= 19 && tile.id <= 28) y += 7.5;
+    else if (tile.id >= 12 && tile.id <= 17) x += 3.5;
+    else if (tile.id >= 30 && tile.id <= 35) x -= 3.5;
+    return { x, y };
+  }
+
+  function renderOwnerDots() {
+    const state = app.state;
+    if (!state) return;
+    const wrap = $('boardOwnerDots');
+    if (!wrap) return;
+    const dots = [];
+    for (const player of state.players) {
+      if (player.eliminated) continue;
+      for (const trophy of player.trophies || []) {
+        const count = Math.max(1, Math.min(3, trophy.streak || 1));
+        const tile = tileOf(trophy.tileId);
+        if (!tile) continue;
+        const position = ownerDotPosition(tile);
+        const color = OWNER_DOT_COLORS[player.charKey] || player.color || '#fff';
+        dots.push(`
+          <span class="owner-dot-wrap" style="left:${position.x}%;top:${position.y}%"
+                title="${escapeHtml(player.name)} · ${count} 个奖杯">
+            ${Array.from({ length: count }, () => `<i class="owner-dot" style="background:${color}"></i>`).join('')}
+          </span>
+        `);
+      }
+    }
+    wrap.innerHTML = dots.join('');
   }
 
   function renderTokens() {
@@ -1015,7 +1080,7 @@
     const hiddenRoll = Boolean(
       pending &&
       pending.playerId === app.meId &&
-      ['roll', 'number'].includes(pending.type) &&
+      ['roll', 'number', 'target'].includes(pending.type) &&
       app.hiddenPendingId === pending.id
     );
     if (state?.status === 'playing' && hiddenRoll) {
@@ -1034,7 +1099,7 @@
   function hidePendingForMap() {
     const pending = app.state?.pending;
     if (!pending || pending.playerId !== app.meId) return;
-    if (!['roll', 'number'].includes(pending.type)) return;
+    if (!['roll', 'number', 'target'].includes(pending.type)) return;
     app.hiddenPendingId = pending.id;
     app.pendingId = pending.id;
     $('pendingBackdrop').classList.add('hidden');
@@ -1075,7 +1140,7 @@
     const mine = pending.playerId === app.meId;
     const isPublicCard = pending.type === 'card'
       && ['chance', 'fate'].includes(pending.meta?.deck);
-    if (mine && ['roll', 'number'].includes(pending.type) && app.hiddenPendingId === pending.id) {
+    if (mine && ['roll', 'number', 'target'].includes(pending.type) && app.hiddenPendingId === pending.id) {
       backdrop.classList.add('hidden');
       app.pendingId = pending.id;
       updateResumeAction();
@@ -1208,7 +1273,7 @@
       <div class="pending-message">${escapeHtml(pending.message || '')}</div>
       ${image}
       <div class="pending-options${pending.options?.length === 2 ? ' stack' : ''}" id="pendingOptions">${options}</div>
-      ${['roll', 'number'].includes(pending.type) ? '<button class="ghost-btn pending-map-btn" id="pendingMapBtn" type="button">查看地图</button>' : ''}
+      ${['roll', 'number', 'target'].includes(pending.type) ? '<button class="ghost-btn pending-map-btn" id="pendingMapBtn" type="button">查看地图</button>' : ''}
     `;
     $('pendingOptions').addEventListener('click', (event) => {
       const button = event.target.closest('[data-pending-value]');
@@ -1301,6 +1366,11 @@
   }
 
   function handlePanelClick(event) {
+    const kickButton = event.target.closest('[data-kick-player]');
+    if (kickButton) {
+      confirmKick(kickButton.dataset.kickPlayer);
+      return;
+    }
     const cardButton = event.target.closest('[data-card-key]');
     if (cardButton) {
       openCharacterCard(cardButton.dataset.cardKey);
@@ -1496,6 +1566,17 @@
       closeModal();
       onConfirm();
     });
+  }
+
+  function confirmKick(playerId) {
+    const player = app.state?.players.find((p) => p.id === playerId);
+    if (!player) return;
+    confirmDialog(
+      '移出玩家',
+      `确定将 ${player.name} 移出房间吗？${app.state.status === 'playing' ? '游戏已开始，移出后视为退出比赛。' : ''}`,
+      '移出',
+      () => app.socket.emit('room:kick', { playerId })
+    );
   }
 
   function confirmLeave() {

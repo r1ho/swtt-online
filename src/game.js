@@ -70,6 +70,7 @@ class Room {
     this.decks = { chance: [], fate: [], item: [] };
     this.bladeUsed = false;
     this.activeBonds = new Set();
+    this.autoRollTimer = null;
     this.seq = 0;
     this.log(`${host.name} 创建了房间`, 'system');
   }
@@ -296,6 +297,7 @@ class Room {
     const first = this.current;
     if (first) first.turnStartTrophyTiles = first.trophies.map((t) => t.tileId);
     this.log(`出发顺序：${ordered.map((p) => p.name).join(' → ')}`, 'system');
+    this.scheduleAutoRoll();
     this.broadcast();
   }
 
@@ -477,6 +479,7 @@ class Room {
   async roll(playerId) {
     this.ensureTurn(playerId);
     if (this.phase !== 'awaitRoll') throw new GameError('现在不能掷骰子');
+    this.clearAutoRoll();
     const player = this.current;
     this.phase = 'rolling';
     this.bladeUsed = false;
@@ -610,11 +613,40 @@ class Room {
       this.bladeUsed = false;
       candidate.turnsTaken += 1;
       candidate.turnStartTrophyTiles = candidate.trophies.map((t) => t.tileId);
+      this.scheduleAutoRoll();
       this.broadcast();
       return;
     }
     // 理论上只剩一名玩家时已经结束，这里兜底
     this.checkGameEnd();
+  }
+
+  clearAutoRoll() {
+    if (this.autoRollTimer) {
+      clearTimeout(this.autoRollTimer);
+      this.autoRollTimer = null;
+    }
+  }
+
+  scheduleAutoRoll() {
+    this.clearAutoRoll();
+    if (this.status !== 'playing' || this.phase !== 'awaitRoll' || !this.current) return;
+    const playerId = this.current.id;
+    this.autoRollTimer = setTimeout(() => {
+      this.autoRollTimer = null;
+      if (
+        this.status === 'playing' &&
+        this.phase === 'awaitRoll' &&
+        this.current?.id === playerId &&
+        !this.pending
+      ) {
+        const player = this.playerById(playerId);
+        if (!player || player.eliminated) return;
+        this.log(`${player.name} 30 秒未操作，系统自动掷骰`, 'system', playerId);
+        this.roll(playerId).catch((error) => console.error('Auto roll failed:', error));
+      }
+    }, 30 * 1000);
+    this.autoRollTimer.unref?.();
   }
 
   async endTurn(playerId) {
@@ -941,6 +973,7 @@ class Room {
 
   finish(winnerIds, reason = '结算') {
     if (this.status === 'ended') return;
+    this.clearAutoRoll();
     this.settleLoansAtSettlement();
     this.status = 'ended';
     this.phase = 'ended';
@@ -1021,6 +1054,31 @@ class Room {
     return true;
   }
 
+  async offerDefend(player, tile, trophy) {
+    if (this.status !== 'playing' || player.eliminated) return false;
+    if (!trophy || trophy.streak >= 3 || player.points < tile.points) return false;
+    const answer = await this.ask(player.id, {
+      type: 'defend',
+      title: `${tile.name} · 连冠`,
+      message: `再次兑换本站第 ${trophy.streak + 1} 个奖杯，花费 ${tile.points} 积分，达到 ${trophy.streak + 1}/3？`,
+      options: [
+        { value: 'yes', label: `兑换第 ${trophy.streak + 1} 个`, tone: 'primary' },
+        { value: 'no', label: '放弃' },
+      ],
+    });
+    if (answer !== 'yes') return false;
+    player.points -= tile.points;
+    trophy.streak += 1;
+    this.effectLog(
+      player,
+      '连冠',
+      `${tile.name} 奖杯达到 ${trophy.streak}/3`,
+      'gain'
+    );
+    this.broadcast();
+    return true;
+  }
+
   async recheckPurchase(player) {
     if (this.status !== 'playing' || player.eliminated || this.pending) return false;
     if (this.current?.id !== player.id || this.phase !== 'action') return false;
@@ -1030,7 +1088,11 @@ class Room {
     const owner = this.players.find(
       (p) => p.trophies.some((t) => t.tileId === tile.id) && !p.eliminated
     );
-    if (owner) return false;
+    if (owner && owner.id !== player.id) return false;
+    if (owner?.id === player.id) {
+      const trophy = owner.trophies.find((t) => t.tileId === tile.id);
+      return this.offerDefend(player, tile, trophy);
+    }
     if (player.points < tile.points) return false;
     return this.offerPurchase(player, tile);
   }
@@ -1121,25 +1183,7 @@ class Room {
           }
         }
         if (trophy.streak < 3 && player.points >= tile.points) {
-          const answer = await this.ask(player.id, {
-            type: 'defend',
-            title: `${tile.name} · 连冠`,
-            message: `再次兑换本站第 ${trophy.streak + 1} 个奖杯，花费 ${tile.points} 积分，达到 ${trophy.streak + 1}/3？`,
-            options: [
-              { value: 'yes', label: `兑换第 ${trophy.streak + 1} 个`, tone: 'primary' },
-              { value: 'no', label: '放弃' },
-            ],
-          });
-          if (answer === 'yes') {
-            player.points -= tile.points;
-            trophy.streak += 1;
-            this.effectLog(
-              player,
-              '连冠',
-              `${tile.name} 奖杯达到 ${trophy.streak}/3`,
-              'gain'
-            );
-          }
+          await this.offerDefend(player, tile, trophy);
         } else if (trophy.streak >= 3) {
           this.log(`${tile.name} 已达 3 个奖杯上限，无法继续兑换`, 'info', player.id);
         } else {
@@ -1682,6 +1726,7 @@ class Room {
       case 'tuisai': {
         const ok = await pay(200, '战略退赛');
         if (!ok) return;
+        this.effectLog(p, '战略退赛', '支付 200 积分，自行选择前进 1-6 步', 'loss');
         const choice = await this.ask(p.id, {
           type: 'number',
           title: '战略退赛',
@@ -1700,10 +1745,10 @@ class Room {
       case 'chouqian': {
         const target = await this.chooseOtherPlayer(p, card, '指定一名玩家替你抽签');
         if (!target) break;
-        const value = await this.rollEffect(target, '抽签嘉宾');
+        const value = await this.rollEffect(p, '抽签嘉宾');
         if (value >= 4) {
           target.points += 200;
-          this.effectLog(p, '抽签嘉宾', `${target.name} 掷出 ${value}，积分 +200`, 'gain');
+          this.effectLog(p, '抽签嘉宾', `${p.name} 掷出 ${value}，${target.name} 积分 +200`, 'gain');
         } else {
           const paid = await this.charge(target, 200, {
             reason: '抽签嘉宾',
@@ -1715,8 +1760,8 @@ class Room {
             p,
             '抽签嘉宾',
             paid > 0
-              ? `${target.name} 掷出 ${value}，积分 -${paid}`
-              : `${target.name} 未能支付，退出世排`,
+              ? `${p.name} 掷出 ${value}，${target.name} 积分 -${paid}`
+              : `${p.name} 掷出 ${value}，${target.name} 未能支付，退出世排`,
             'loss'
           );
         }
@@ -1736,6 +1781,7 @@ class Room {
         } else {
           this.log(`${p.name} 前后三步没有其他玩家，积分 -100`, 'loss', p.id);
           await pay(100, '没有陪练');
+          if (!p.eliminated) this.effectLog(p, '没有陪练', '前后三步没有其他玩家，积分 -100', 'loss');
         }
         break;
       }
@@ -1758,6 +1804,7 @@ class Room {
         if (p.gender === 'male') {
           this.log(`${p.name} 的袜子不翼而飞，积分 -200`, 'loss', p.id);
           await pay(200, '偷白袜');
+          if (!p.eliminated) this.effectLog(p, '偷白袜', '积分 -200', 'loss');
         } else {
           this.effectLog(p, '偷白袜', '此卡只对男性角色生效，无事发生', 'info');
         }
@@ -1773,13 +1820,19 @@ class Room {
         break;
       }
       case 'dazuoqian': {
+        let amount = 500;
+        if (p.charKey !== 'zhangbenzhiyao' && p.points >= 4000) amount = 250;
         if (p.charKey === 'zhangbenzhiyao') {
           this.log(`${p.name} 无条件被大做签，积分 -500`, 'loss', p.id);
-          await pay(500, '大做签');
-        } else if (p.points >= 4000) {
-          await pay(250, '大做签（大种子位）');
-        } else {
-          await pay(500, '大做签');
+        }
+        await pay(amount, amount === 250 ? '大做签（大种子位）' : '大做签');
+        if (!p.eliminated) {
+          this.effectLog(
+            p,
+            '大做签',
+            amount === 250 ? '大种子位，积分 -250' : `积分 -${amount}`,
+            'loss'
+          );
         }
         break;
       }
@@ -1788,6 +1841,7 @@ class Room {
           this.effectLog(p, '游走', '当前积分≤2500，没有清分压力，积分不变', 'info');
         } else {
           await pay(500, '游走');
+          if (!p.eliminated) this.effectLog(p, '游走', '积分 -500', 'loss');
         }
         break;
       }
@@ -1797,6 +1851,7 @@ class Room {
       }
       case 'jianmianhui': {
         await pay(200, '球员见面会');
+        if (!p.eliminated) this.effectLog(p, '球员见面会', '积分 -200', 'loss');
         break;
       }
       case 'jifenshixiao': {
@@ -2256,8 +2311,10 @@ class Room {
     if (this.status === 'waiting') {
       this.players = this.players.filter((p) => p.id !== playerId);
       if (this.hostId === playerId) {
-        const next = this.players[0];
-        this.hostId = next ? next.id : null;
+        const pool = this.players.filter((p) => p.online);
+        this.hostId = pool.length
+          ? pool[randomInt(0, pool.length - 1)].id
+          : this.players[0]?.id || null;
       }
       this.log(`${player.name} 离开了房间`, 'system');
       this.broadcast();
@@ -2267,6 +2324,7 @@ class Room {
       this.log(`${player.name} 退出了比赛`, 'danger', player.id);
       const wasCurrent = this.current?.id === playerId;
       const hadPending = Boolean(this.pending);
+      if (wasCurrent) this.clearAutoRoll();
       player.eliminated = true;
       player.effects = { pingshu: false, michelin: false, blame: false };
       player.items = [];
@@ -2294,12 +2352,19 @@ class Room {
 
   transferHost(preferredId = null) {
     const preferred = preferredId ? this.playerById(preferredId) : null;
+    const onlineCandidates = this.players.filter(
+      (p) => p.id !== this.hostId && !p.eliminated && p.online
+    );
+    const fallbackCandidates = this.players.filter(
+      (p) => p.id !== this.hostId && !p.eliminated
+    );
+    const pool = onlineCandidates.length ? onlineCandidates : fallbackCandidates;
     const next =
       preferred && !preferred.eliminated && preferred.online
         ? preferred
-        : this.players.find((p) => p.id !== this.hostId && !p.eliminated && p.online) ||
-          this.players.find((p) => p.id !== this.hostId && !p.eliminated) ||
-          null;
+        : pool.length
+          ? pool[randomInt(0, pool.length - 1)]
+          : null;
     if (next) {
       this.hostId = next.id;
       this.log(`${next.name} 成为新房主`, 'system');

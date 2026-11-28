@@ -317,6 +317,32 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('room:kick', (payload) => {
+    try {
+      const { room, player: host } = getSocketRoom(socket);
+      if (host.id !== room.hostId) throw new GameError('只有房主可以移出玩家');
+      const target = room.playerById(payload?.playerId);
+      if (!target) throw new GameError('该玩家不在房间中');
+      if (target.id === host.id) throw new GameError('不能移出自己');
+      target.token = makeId(24);
+      const targetSocket = target.socketId
+        ? io.sockets.sockets.get(target.socketId)
+        : null;
+      if (targetSocket) {
+        targetSocket.emit('room:kicked');
+        targetSocket.leave(room.code);
+        targetSocket.data.code = null;
+        targetSocket.data.playerId = null;
+        targetSocket.data.token = null;
+      }
+      target.socketId = null;
+      room.forfeit(target.id);
+      room.broadcast();
+    } catch (error) {
+      sendError(socket, error);
+    }
+  });
+
   socket.on('room:leave', () => {
     if (socket.data.spectatorId) {
       const code = socket.data.code;

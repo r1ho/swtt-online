@@ -689,6 +689,30 @@ button:disabled {
   z-index: 5;
 }
 
+.board-owner-dots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.owner-dot-wrap {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  transform: translate(-50%, -50%);
+}
+
+.owner-dot {
+  display: block;
+  width: clamp(4px, 0.55vw, 7px);
+  height: clamp(4px, 0.55vw, 7px);
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
 .tile-pulse {
   position: absolute;
   width: 5.6%;
@@ -1180,6 +1204,36 @@ button:disabled {
   background: rgba(109, 182, 255, 0.12);
   border-color: rgba(109, 182, 255, 0.35);
   color: #d7ecff;
+}
+
+.pp-badge.kick-badge {
+  appearance: none;
+  cursor: pointer;
+  color: #d7ecff;
+  background: rgba(109, 182, 255, 0.18);
+  border-color: rgba(109, 182, 255, 0.5);
+}
+
+.pp-badge.kick-badge:hover {
+  background: rgba(109, 182, 255, 0.3);
+}
+
+.seat-kick {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  border: 1px solid rgba(109, 182, 255, 0.45);
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgba(109, 182, 255, 0.16);
+  color: #d7ecff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.seat-kick:hover {
+  background: rgba(109, 182, 255, 0.3);
 }
 
 .pp-badge.ability-btn,
